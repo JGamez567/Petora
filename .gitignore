@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python (scanner)
+__pycache__/
+*.pyc
+scanner/build_reference/.venv/
+scanner/build_reference/.env
+
+# scanner data: keep only the prebuilt reference library, ignore icons/debug output
+scanner/build_reference/data/*
+!scanner/build_reference/data/reference.json

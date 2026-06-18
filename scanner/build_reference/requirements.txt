@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+requests
+numpy==2.4.6
+scipy
+pillow==12.2.0
+imagehash==4.3.2
+pytesseract
