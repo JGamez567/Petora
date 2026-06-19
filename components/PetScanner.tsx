@@ -3,10 +3,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 
-const SCAN_URL = process.env.NEXT_PUBLIC_SCAN_URL || "http://localhost:8000";
 const MAX_PAGES = 7;
-
-type Mode = "personal" | "leaderboard";
 
 interface Item {
   pet_id: number | null;
@@ -48,16 +45,18 @@ function VariantChips({ item }: { item: Item }) {
 }
 
 export default function PetScanner() {
-  const [mode, setMode] = useState<Mode>("personal");
+  const [leaderboard, setLeaderboard] = useState(false); // the one toggle: opt in/out of the board
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
-  const [leaderboardUpdated, setLeaderboardUpdated] = useState(false);
+  const [saved, setSaved] = useState<{ leaderboard: boolean; total: number; pets: number } | null>(null);
   const [flagMsg, setFlagMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const reset = () => { setResult(null); setError(null); setLeaderboardUpdated(false); setFlagMsg(null); };
+  const reset = () => {
+    setResult(null); setError(null); setSaved(null); setFlagMsg(null);
+  };
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
     const imgs = Array.from(incoming).filter((f) => f.type.startsWith("image/"));
@@ -72,29 +71,32 @@ export default function PetScanner() {
     try {
       const fd = new FormData();
       files.forEach((f) => fd.append("files", f));
-      if (mode === "leaderboard") {
-        const res = await fetch("/submit", { method: "POST", body: fd });
-        const data = await res.json();
-        if (res.ok && data.status === "ok") {
-          setResult({ status: "ok", items: data.items, totals: { total: data.total } });
-          setLeaderboardUpdated(true);
-        } else {
-          const map: Record<string, string> = {
-            not_signed_in: "Please sign in first.",
-            roblox_verification_required: "Verify your account first on the Roblox Verification page.",
-            username_unreadable: "We couldn't read a Roblox username on this board. Please upload a board screenshot that clearly shows the username header for the same Roblox account you verified with.",
-            username_mismatch: "This board isn't from your verified Roblox account. Please submit a board from the account you verified with.",
-            scan_not_ok: "This board needs fixing before it can be submitted.",
-            write_failed: "Something went wrong saving. Please try again.",
-          };
-          setError(map[data.error] || `Update failed (${res.status}).`);
-        }
+      fd.append("leaderboard", leaderboard ? "true" : "false");
+
+      const res = await fetch("/api/scan", { method: "POST", body: fd });
+      const data = await res.json();
+
+      if (res.ok && data.status === "ok") {
+        setResult({ status: "ok", items: data.items, totals: { total: data.total } });
+        setSaved({ leaderboard: data.leaderboard, total: data.total, pets: data.pets });
+      } else if (data.error === "scan_not_ok" && data.scan?.status === "needs_consolidation") {
+        // same consolidation UI as before — surface the scanner's findings
+        setResult(data.scan as ScanResult);
       } else {
-        fd.append("mode", "personal");
-        const res = await fetch(`${SCAN_URL}/scan`, { method: "POST", body: fd });
-        const data = await res.json();
-        if (!res.ok) setError(data.detail || `Scan failed (${res.status}).`);
-        else setResult(data as ScanResult);
+        const map: Record<string, string> = {
+          not_signed_in: "Please sign in to scan.",
+          profile_not_found: "We couldn't load your profile. Please sign in again.",
+          roblox_verification_required:
+            "To appear on the leaderboard, verify your Roblox account first on the Verification page. You can still scan privately by turning the leaderboard toggle off.",
+          rate_limited: `You've used your scan for today. Try again in ${data.hours_left ?? 24}h.`,
+          username_unreadable:
+            "We couldn't read a Roblox username on this board. Upload a screenshot that clearly shows the username header for the account you verified with — or turn the leaderboard toggle off to save privately.",
+          username_mismatch:
+            "This board isn't from your verified Roblox account. Submit a board from the account you verified with, or turn the leaderboard toggle off to save privately.",
+          scan_not_ok: "This board needs fixing before it can be saved.",
+          write_failed: "Something went wrong saving. Please try again.",
+        };
+        setError(map[data.error] || `Scan failed (${res.status}).`);
       }
     } catch {
       setError("Couldn't reach the server. Is everything running?");
@@ -115,27 +117,76 @@ export default function PetScanner() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="inline-flex rounded-[10px] bg-[rgba(168,139,250,0.07)] p-1 text-sm">
-          {(["personal", "leaderboard"] as Mode[]).map((m) => (
-            <button key={m} onClick={() => { setMode(m); reset(); }}
-              className={`rounded-md px-4 py-1.5 font-medium capitalize transition ${
-                mode === m ? "bg-[color:var(--surface-2)] text-[color:var(--text)]" : "text-[color:var(--muted)] hover:text-[color:var(--text)]"}`}>
-              {m}
-            </button>
-          ))}
-        </div>
+      <h1 className="[font-family:var(--font-display)] text-lg font-semibold text-[color:var(--text)]">
+        Scan your pets
+      </h1>
 
-        <Link href="/how-to-use" className="petora-howto-link">
-          How to use Petora →
+      {/* Pre-scan checklist — the four things that make a board scannable */}
+      <div className="petora-card p-5">
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+          Before you scan
+        </p>
+        <ul className="space-y-2.5 text-sm text-[color:var(--text)]">
+          {[
+            "Take a screenshot of only your profile.",
+            "Keep duplicate pets together in one box.",
+            "Make sure the username you verified with is visible.",
+            "Remove any stickers.",
+          ].map((tip) => (
+            <li key={tip} className="flex items-start gap-2.5">
+              <svg
+                className="mt-0.5 h-4 w-4 flex-none text-[color:var(--lilac)]"
+                viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              >
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              <span>{tip}</span>
+            </li>
+          ))}
+        </ul>
+        <Link href="/how-to-use" className="petora-howto-link mt-4 inline-block">
+          See the full guide for more details →
         </Link>
       </div>
 
-      <p className="text-sm text-[color:var(--muted)]">
-        {mode === "personal"
-          ? "Scan your pets into your portfolio. Only you see this."
-          : "Scanning updates the leaderboard and replaces your tracked pets. The board must show your verified Roblox username."}
-      </p>
+      {/* Always-visible replace + leaderboard explainer (§6.1 warning) */}
+      <div className="rounded-lg border border-[rgba(245,200,120,0.28)] bg-[rgba(245,200,120,0.08)] px-4 py-3 text-sm text-[#F5C878]">
+        Scanning <span className="font-semibold">replaces</span> the pets currently tracked in your
+        portfolio with whatever&apos;s in these screenshots. Manual edits on your portfolio page
+        aren&apos;t touched. Use the toggle below to choose whether this scan also lists you on the
+        public leaderboard.
+      </div>
+
+      {/* The one toggle: leaderboard opt-in/opt-out -> profiles.is_public */}
+      <div className="petora-card flex items-center justify-between gap-4 p-4">
+        <div className="min-w-0">
+          <p className="font-medium text-[color:var(--text)]">Show me on the leaderboard</p>
+          <p className="mt-0.5 text-xs text-[color:var(--muted)]">
+            {leaderboard
+              ? "This scan is verified against your Roblox username and listed publicly."
+              : "This scan stays private — you won't appear on the public leaderboard."}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={leaderboard}
+          aria-label="Show me on the leaderboard"
+          onClick={() => { setLeaderboard((v) => !v); reset(); }}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+            leaderboard
+              ? "[background-image:var(--ramp-h)]"
+              : "border border-[color:var(--line-2)] bg-[color:var(--surface-2)]"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+              leaderboard ? "left-[22px]" : "left-0.5"
+            }`}
+          />
+        </button>
+      </div>
 
       <div onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
@@ -161,7 +212,9 @@ export default function PetScanner() {
 
       <button onClick={run} disabled={!canRun}
         className="w-full rounded-lg [background-image:var(--ramp-h)] [font-family:var(--font-display)] px-4 py-2.5 font-semibold text-[#1a1030] shadow-[0_10px_30px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40">
-        {loading ? (mode === "leaderboard" ? "Updating…" : "Scanning…") : (mode === "leaderboard" ? "Scan & update leaderboard" : "Scan pets")}
+        {loading
+          ? (leaderboard ? "Updating…" : "Scanning…")
+          : (leaderboard ? "Scan & update leaderboard" : "Scan & save")}
       </button>
 
       {error && <div className="rounded-lg border border-[rgba(251,113,133,0.28)] bg-[rgba(251,113,133,0.10)] px-4 py-3 text-sm text-[#FCA5B6]">{error}</div>}
@@ -176,9 +229,11 @@ export default function PetScanner() {
 
       {result?.status === "ok" && result.items && result.totals && (
         <div className="space-y-4">
-          {leaderboardUpdated && (
+          {saved && (
             <div className="rounded-lg border border-[rgba(93,230,168,0.28)] bg-[rgba(93,230,168,0.10)] px-4 py-3 text-sm text-[color:var(--up)]">
-              Updated — you're on the leaderboard with {fmt(result.totals.total)}.
+              {saved.leaderboard
+                ? `Updated — you're on the leaderboard with ${fmt(saved.total)}.`
+                : `Saved — ${saved.pets} scanned pet${saved.pets === 1 ? "" : "s"} ${saved.pets === 1 ? "is" : "are"} now tracked. Any pets you added manually were kept, and you're not on the leaderboard.`}
             </div>
           )}
           <div className="petora-card p-5">
@@ -204,7 +259,7 @@ export default function PetScanner() {
             ))}
           </ul>
 
-          {leaderboardUpdated && (
+          {saved?.leaderboard && (
             <div className="space-y-2">
               <button onClick={requestCheck}
                 className="w-full rounded-lg border border-[color:var(--line-2)] px-4 py-2.5 text-sm font-medium text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)]">

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Row = { rank: number; username: string; total_value: number };
@@ -41,6 +42,9 @@ const features = [
 
 export default function Home() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [email, setEmail] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     supabase.rpc("get_leaderboard", { limit_count: 5 }).then(({ data }) => {
@@ -49,6 +53,23 @@ export default function Home() {
       })));
     });
   }, []);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setEmail(data.user?.email ?? null);
+      setAuthReady(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      setEmail(session?.user?.email ?? null);
+      setAuthReady(true);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  async function logout() {
+    await supabase.auth.signOut();
+    router.refresh();
+  }
 
   const top = rows[0];
 
@@ -66,22 +87,57 @@ export default function Home() {
             Petora scans your board, values every pet from live market data, and ranks you
             against verified traders. One screenshot and you're on the board.
           </p>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Link
-              href="/login"
-              className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
-            >
-              Get started
-            </Link>
-            <Link
-              href="/leaderboard"
-              className="inline-flex items-center gap-2 rounded-full border border-[color:var(--line-2)] px-6 py-3 text-[15px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)]"
-            >
-              View leaderboard
-            </Link>
-            <Link href="/how-to-use" className="px-2 text-[14px] font-medium text-[color:var(--muted)] transition hover:text-[color:var(--lilac)]">
-              How it works →
-            </Link>
+          <div className="mt-8 min-h-[52px]">
+            {authReady && (
+              <div className="flex flex-wrap items-center gap-3">
+                {email ? (
+                  <>
+                    <Link
+                      href="/portfolio"
+                      className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+                    >
+                      Go to my portfolio
+                    </Link>
+                    <Link
+                      href="/leaderboard"
+                      className="inline-flex items-center gap-2 rounded-full border border-[color:var(--line-2)] px-6 py-3 text-[15px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)]"
+                    >
+                      View leaderboard
+                    </Link>
+                    <button
+                      onClick={logout}
+                      className="px-2 text-[14px] font-medium text-[color:var(--muted)] transition hover:text-[color:var(--lilac)]"
+                    >
+                      Log out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      href="/login"
+                      className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+                    >
+                      Get started
+                    </Link>
+                    <Link
+                      href="/leaderboard"
+                      className="inline-flex items-center gap-2 rounded-full border border-[color:var(--line-2)] px-6 py-3 text-[15px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)]"
+                    >
+                      View leaderboard
+                    </Link>
+                    <Link href="/how-to-use" className="px-2 text-[14px] font-medium text-[color:var(--muted)] transition hover:text-[color:var(--lilac)]">
+                      How it works →
+                    </Link>
+                  </>
+                )}
+              </div>
+            )}
+            {authReady && email && (
+              <p className="mt-3 text-[13px] text-[color:var(--muted)]">
+                You&apos;re already signed in as{" "}
+                <span className="text-[color:var(--text)]">{email}</span>.
+              </p>
+            )}
           </div>
         </div>
 
@@ -108,6 +164,42 @@ export default function Home() {
             <path d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12" fill="none" stroke="url(#line)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             <circle cx="400" cy="12" r="4.5" fill="#fff" />
           </svg>
+        </div>
+      </section>
+
+      {/* Elvebredd credit — prominent values-source attribution */}
+      <section className="mt-12">
+        <div className="petora-card relative overflow-hidden p-6 sm:p-7" style={{ borderColor: "var(--line-2)", boxShadow: "0 24px 60px -34px rgba(124,58,237,0.5)" }}>
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="max-w-2xl">
+              <p className="petora-eyebrow">Pet values powered by</p>
+              <h2 className="mt-2 text-[28px] font-bold leading-none [font-family:var(--font-display)]">
+                <span className="petora-gradient">Elvebredd</span>
+              </h2>
+              <p className="mt-3 text-[14.5px] leading-relaxed text-[color:var(--muted)]">
+                Every value in Petora comes straight from{" "}
+                <a
+                  href="https://elvebredd.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-[color:var(--lilac)] underline decoration-[color:var(--line-2)] underline-offset-2 transition hover:text-[color:var(--violet-bright)]"
+                >
+                  Elvebredd
+                </a>{" "}
+                — the community-built value list and Win/Fair/Lose calculator that&apos;s been the
+                Adopt Me trading standard since 2022. We don&apos;t set prices; Elve does, and Petora
+                keeps your portfolio synced to them.
+              </p>
+            </div>
+            <a
+              href="https://elvebredd.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex flex-none items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+            >
+              Visit Elvebredd →
+            </a>
+          </div>
         </div>
       </section>
 
@@ -157,8 +249,21 @@ export default function Home() {
         </section>
       )}
 
+      {/* values attribution — Elvebredd powers our pet values */}
+      <p className="mt-20 text-center text-[13px] text-[color:var(--muted)]">
+        Pet values powered by{" "}
+        <a
+          href="https://elvebredd.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-semibold text-[color:var(--lilac)] underline decoration-[color:var(--line-2)] underline-offset-2 transition hover:text-[color:var(--violet-bright)]"
+        >
+          Elvebredd
+        </a>
+      </p>
+
       {/* tagline */}
-      <p className="mt-20 text-center text-[13px] font-semibold tracking-[0.22em] text-[color:var(--muted)] [font-family:var(--font-display)]">
+      <p className="mt-4 text-center text-[13px] font-semibold tracking-[0.22em] text-[color:var(--muted)] [font-family:var(--font-display)]">
         TRACK. <span className="text-[color:var(--violet-bright)]">GROW.</span> DOMINATE.
       </p>
     </main>

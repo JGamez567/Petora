@@ -8,14 +8,24 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 type Pet = { id: number; name: string; rarity: string | null; icon_url: string | null; value: number | null };
 type Mover = { pet_id: number; name: string; icon_url: string | null; current_value: number; change: number };
 
-const VARIANTS = [
-  { key: "normal",  label: "Normal",     neon: "normal", fly: false, ride: false },
-  { key: "fly",     label: "Fly",        neon: "normal", fly: true,  ride: false },
-  { key: "ride",    label: "Ride",       neon: "normal", fly: false, ride: true  },
-  { key: "flyride", label: "Fly & Ride", neon: "normal", fly: true,  ride: true  },
-  { key: "neon",    label: "Neon",       neon: "neon",   fly: false, ride: false },
-  { key: "mega",    label: "Mega",       neon: "mega",   fly: false, ride: false },
-];
+// Pet tier -> the `neon` column ("normal" | "neon" | "mega")
+const TIERS = [
+  { key: "normal", label: "Normal" },
+  { key: "neon",   label: "Neon" },
+  { key: "mega",   label: "Mega" },
+] as const;
+
+// Potions -> the fly + ride booleans. Applies to ANY tier, so Neon Fly & Ride,
+// Mega Ride, etc. are all reachable now.
+const POTIONS = [
+  { key: "none",    label: "No Potions", fly: false, ride: false },
+  { key: "fly",     label: "Fly",        fly: true,  ride: false },
+  { key: "ride",    label: "Ride",       fly: false, ride: true  },
+  { key: "flyride", label: "Fly & Ride", fly: true,  ride: true  },
+] as const;
+
+const DEFAULT_TIER = "normal";
+const DEFAULT_POTION = POTIONS[3]; // Normal Fly & Ride is the default view
 
 const RANGES = [
   { key: "day",   label: "Day",   days: 1 },
@@ -35,7 +45,8 @@ export default function Catalog() {
   const [movers, setMovers] = useState<Mover[]>([]);
 
   const [selected, setSelected] = useState<Pet | null>(null);
-  const [variant, setVariant] = useState(VARIANTS[0]);
+  const [tier, setTier] = useState<string>(DEFAULT_TIER);
+  const [potion, setPotion] = useState<(typeof POTIONS)[number]>(DEFAULT_POTION);
   const [range, setRange] = useState<(typeof RANGES)[number]>(RANGES[2]);
   const [history, setHistory] = useState<{ ts: number; value: number }[]>([]);
   const [graphLoading, setGraphLoading] = useState(false);
@@ -84,7 +95,7 @@ export default function Catalog() {
     });
   }, []);
 
-  // load history (on pet / variant / range change)
+  // load history (on pet / tier / potion / range change)
   useEffect(() => {
     if (!selected) return;
     const pet = selected;
@@ -92,8 +103,8 @@ export default function Catalog() {
       setGraphLoading(true);
       const { data: vRows } = await supabase
         .from("pet_variants").select("id")
-        .eq("pet_id", pet.id).eq("neon", variant.neon)
-        .eq("fly", variant.fly).eq("ride", variant.ride).limit(1);
+        .eq("pet_id", pet.id).eq("neon", tier)
+        .eq("fly", potion.fly).eq("ride", potion.ride).limit(1);
       const variantId = vRows?.[0]?.id;
       if (!variantId) { setHistory([]); setGraphLoading(false); return; }
 
@@ -110,7 +121,7 @@ export default function Catalog() {
       setGraphLoading(false);
     }
     loadHistory();
-  }, [selected, variant, range]);
+  }, [selected, tier, potion, range]);
 
   const filtered = pets.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
   const rising = movers.filter((m) => m.change > 0).sort((a, b) => b.change - a.change);
@@ -118,7 +129,8 @@ export default function Catalog() {
 
   function openPet(pet: Pet) {
     setSelected(pet);
-    setVariant(VARIANTS[0]);
+    setTier(DEFAULT_TIER);
+    setPotion(DEFAULT_POTION);
     setRange(RANGES[2]);
   }
 
@@ -260,18 +272,38 @@ export default function Catalog() {
               </button>
             </div>
 
+            {/* Tier: Normal / Neon / Mega */}
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Type</div>
             <div className="mb-3 flex flex-wrap gap-2">
-              {VARIANTS.map((v) => (
+              {TIERS.map((t) => (
                 <button
-                  key={v.key}
-                  onClick={() => setVariant(v)}
+                  key={t.key}
+                  onClick={() => setTier(t.key)}
                   className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
-                    variant.key === v.key
+                    tier === t.key
                       ? "border border-[color:var(--violet)] bg-[rgba(168,85,247,0.16)] text-[color:var(--lilac)]"
                       : "border border-[color:var(--line)] text-[color:var(--muted)] hover:text-[color:var(--text)]"
                   }`}
                 >
-                  {v.label}
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Potions: combine with any tier */}
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Potions</div>
+            <div className="mb-4 flex flex-wrap gap-2">
+              {POTIONS.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => setPotion(p)}
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
+                    potion.key === p.key
+                      ? "border border-[color:var(--violet)] bg-[rgba(168,85,247,0.16)] text-[color:var(--lilac)]"
+                      : "border border-[color:var(--line)] text-[color:var(--muted)] hover:text-[color:var(--text)]"
+                  }`}
+                >
+                  {p.label}
                 </button>
               ))}
             </div>
@@ -302,11 +334,6 @@ export default function Catalog() {
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={history}>
-                    <defs>
-                      <linearGradient id="petoraLine" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0" stopColor="#DDD6FE" /><stop offset="1" stopColor="#A855F7" />
-                      </linearGradient>
-                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(168,139,250,0.12)" />
                     <XAxis dataKey="ts" tickFormatter={(t) => new Date(t).toLocaleDateString()} fontSize={12} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
                     <YAxis tickFormatter={(v) => v.toLocaleString()} fontSize={12} width={60} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
@@ -317,7 +344,7 @@ export default function Catalog() {
                       labelStyle={{ color: "#988FB0" }}
                       itemStyle={{ color: "#DDD6FE" }}
                     />
-                    <Line type="monotone" dataKey="value" stroke="url(#petoraLine)" strokeWidth={2.5} dot={false} />
+                    <Line type="monotone" dataKey="value" stroke="#A855F7" strokeWidth={2.5} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               )}

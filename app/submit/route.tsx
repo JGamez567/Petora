@@ -114,6 +114,7 @@ export async function POST(req: Request) {
     total_value: total,
     holdings: scan.items,
     recorded_at: new Date().toISOString(),
+    source: 'submit',
   });
 if (snapErr) return NextResponse.json({ error: 'write_failed', detail: snapErr.message }, { status: 500 });
 

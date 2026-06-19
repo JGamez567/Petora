@@ -41,9 +41,12 @@ export default function Nav() {
   return (
     <header className="sticky top-0 z-50 flex items-center gap-6 border-b border-[color:var(--line)] bg-[rgba(12,8,22,0.72)] px-6 py-3.5 backdrop-blur-[14px]">
       <Link href="/" className="flex items-center gap-2.5" aria-label="Petora home">
-        <span className="grid h-[34px] w-[34px] place-items-center rounded-[9px] [background-image:var(--ramp)] [font-family:var(--font-display)] text-[20px] font-bold text-[#1a1030] shadow-[0_0_22px_rgba(168,85,247,0.45)]">
-          P
-        </span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/petora-mark.png"
+          alt=""
+          className="h-[34px] w-[34px] rounded-[9px] shadow-[0_0_22px_rgba(168,85,247,0.45)]"
+        />
         <span className="petora-gradient [font-family:var(--font-display)] text-[20px] font-bold tracking-[0.14em]">
           PETORA
         </span>
