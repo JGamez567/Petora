@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 export default function SignUp() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -34,10 +35,16 @@ export default function SignUp() {
       <h1>Sign up</h1>
       <input placeholder="Email" type="email" value={email}
         onChange={(e) => setEmail(e.target.value)}
-        style={{ width: "100%", padding: "10px 14px", fontSize: 16, border: "1px solid #ccc", borderRadius: 8, marginBottom: 10 }} />
-      <input placeholder="Password (min 6 characters)" type="password" value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        style={{ width: "100%", padding: "10px 14px", fontSize: 16, border: "1px solid #ccc", borderRadius: 8, marginBottom: 16 }} />
+        style={{ width: "100%", padding: "10px 14px", fontSize: 16, border: "1px solid #ccc", borderRadius: 8, marginBottom: 10, boxSizing: "border-box" }} />
+      <div style={{ position: "relative", marginBottom: 16 }}>
+        <input placeholder="Password (min 6 characters)" type={showPassword ? "text" : "password"} value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{ width: "100%", padding: "10px 60px 10px 14px", fontSize: 16, border: "1px solid #ccc", borderRadius: 8, boxSizing: "border-box" }} />
+        <button type="button" onClick={() => setShowPassword((s) => !s)}
+          style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#2563eb", fontSize: 13, cursor: "pointer", fontWeight: 600, padding: 4 }}>
+          {showPassword ? "Hide" : "Show"}
+        </button>
+      </div>
       <button onClick={signUp} disabled={loading}
         style={{ width: "100%", padding: "10px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
         {loading ? "..." : "Create account"}
