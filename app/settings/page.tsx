@@ -1,8 +1,9 @@
 // → app/settings/page.tsx   (URL: /settings)
 // The OAuth callback redirects here with ?roblox=ok | taken | error.
-
+export const dynamic = "force-dynamic";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+
 
 export default async function SettingsPage({
   searchParams,
