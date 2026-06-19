@@ -5,43 +5,47 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
-export default function Login() {
+export default function SignUp() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  async function logIn() {
+  async function signUp() {
     if (!email.trim()) return setMsg("Please enter your email.");
-    if (!password) return setMsg("Please enter your password.");
+    if (!password) return setMsg("Please choose a password.");
+    if (password.length < 6) return setMsg("Password must be at least 6 characters.");
     setLoading(true); setMsg(null);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
     });
     setLoading(false);
     if (error) return setMsg(error.message);
-    router.push("/portfolio");
+    if (data.session) router.push("/portfolio");
+    else setMsg("Account created. Check your email to confirm, then log in.");
   }
+
+  const isSuccess = msg?.startsWith("Account created");
 
   return (
     <main style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 380, margin: "40px auto" }}>
-      <h1>Log in</h1>
+      <h1>Sign up</h1>
       <input placeholder="Email" type="email" value={email}
         onChange={(e) => setEmail(e.target.value)}
         style={{ width: "100%", padding: "10px 14px", fontSize: 16, border: "1px solid #ccc", borderRadius: 8, marginBottom: 10 }} />
-      <input placeholder="Password" type="password" value={password}
+      <input placeholder="Password (min 6 characters)" type="password" value={password}
         onChange={(e) => setPassword(e.target.value)}
         style={{ width: "100%", padding: "10px 14px", fontSize: 16, border: "1px solid #ccc", borderRadius: 8, marginBottom: 16 }} />
-      <button onClick={logIn} disabled={loading}
+      <button onClick={signUp} disabled={loading}
         style={{ width: "100%", padding: "10px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
-        {loading ? "..." : "Log in"}
+        {loading ? "..." : "Create account"}
       </button>
-      {msg && <p style={{ color: "#c00", fontSize: 14, marginTop: 12 }}>{msg}</p>}
+      {msg && <p style={{ color: isSuccess ? "#16a34a" : "#c00", fontSize: 14, marginTop: 12 }}>{msg}</p>}
       <p style={{ fontSize: 14, marginTop: 16, textAlign: "center" }}>
-        Don&apos;t have an account?{" "}
-        <Link href="/signup" style={{ color: "#2563eb", fontWeight: 600 }}>Sign up</Link>
+        Already have an account?{" "}
+        <Link href="/login" style={{ color: "#2563eb", fontWeight: 600 }}>Log in</Link>
       </p>
     </main>
   );

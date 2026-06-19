@@ -4,6 +4,10 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 
+// Auth-gated admin page — never prerender it. This also avoids the build-time
+// Supabase-client error from trying to statically generate the route.
+export const dynamic = "force-dynamic";
+
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? "")
   .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
 
