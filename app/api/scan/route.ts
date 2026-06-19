@@ -205,11 +205,14 @@ export async function POST(req: Request) {
   //     Also stamp the unified daily limiter, and keep last_submitted_at fresh on the
   //     leaderboard path. (is_public isn't a protected column, but routing it through
   //     this verified path keeps the *value* behind it trustworthy.)
+  // only stamp the daily limiter when the scan actually produced pets,
+  // so a no-result scan doesn't burn the user's one free daily scan
+  const producedPets = scanned.length > 0;
   const { error: profErr } = await admin.from('profiles')
     .update({
       is_public: wantsLeaderboard,
-      last_personal_scan_at: now,
-      ...(wantsLeaderboard ? { last_submitted_at: now } : {}),
+      ...(producedPets ? { last_personal_scan_at: now } : {}),
+      ...(wantsLeaderboard && producedPets ? { last_submitted_at: now } : {}),
     })
     .eq('id', user.id);
   if (profErr) console.error('PROFILE UPDATE FAILED:', profErr);
