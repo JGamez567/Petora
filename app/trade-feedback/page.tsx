@@ -3,6 +3,7 @@ import Link from "next/link";
 
 export const metadata = {
   title: "Trade Feedback — coming soon",
+  description:
     "Upload a trade and Petora tells you whether it was a good deal — weighing value, demand, and how hard each pet is to move.",
 };
 
