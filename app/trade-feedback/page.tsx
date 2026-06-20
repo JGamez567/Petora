@@ -3,22 +3,21 @@ import Link from "next/link";
 
 export const metadata = {
   title: "Trade Feedback — coming soon",
-  description:
-    "A reputation layer for Adopt Me trading. Leave feedback after trades and build a public trader score on Petora.",
+    "Upload a trade and Petora tells you whether it was a good deal — weighing value, demand, and how hard each pet is to move.",
 };
 
 const points = [
   {
-    title: "Leave feedback after a trade",
-    body: "Mark a trade as done and rate how it went, with an optional note — like vouching for someone in a trading server, but kept on record.",
+    title: "Upload the trade, get a verdict",
+    body: "Drop in a screenshot of both sides and Petora reads every pet, then calls the trade a win, fair, or loss — with the reasoning laid out.",
   },
   {
-    title: "Build a trusted reputation",
-    body: "Your rating and trade history live on your Petora profile, so a strong track record follows you everywhere you trade.",
+    title: "Value and demand, together",
+    body: "It compares total value on each side, then weighs demand too — a lower-value pet everyone wants can still beat a pricey one nobody trades for.",
   },
   {
-    title: "Trade with confidence",
-    body: "Check anyone's feedback before you commit — spot the traders worth dealing with and steer clear of the rest.",
+    title: "Knows what's hard to trade",
+    body: "Petora flags pets that are slow to move, so you know whether you picked up something liquid or something that'll sit in your inventory.",
   },
 ];
 
@@ -75,8 +74,8 @@ export default function TradeFeedbackPage() {
       </h1>
 
       <p style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.6, maxWidth: 560 }}>
-        A reputation layer for Adopt Me trading. After a trade, leave honest feedback and build a
-        public trader score — so everyone can tell at a glance who&apos;s safe to deal with.
+        Upload a screenshot of a trade and Petora tells you whether you won, lost, or broke even —
+        weighing value, demand, and how hard each pet is to move.
       </p>
 
       <ol style={{ listStyle: "none", margin: "40px 0 0", padding: 0, display: "grid", gap: 14 }}>
