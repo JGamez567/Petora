@@ -1,35 +1,43 @@
 """
 common.py  --  the Adopt Me board scanner, as one importable library.
 
-This consolidates the logic that the numbered scripts validated, so a service
-(or a CLI wrapper) can run the whole pipeline in memory instead of shelling out
-and passing data through disk files. The numbered scripts can become thin
-wrappers that import from here, which also kills the duplicated red_mask() /
-normalize_icon() / constants that used to drift between 04/05/06/10.
-
 Pipeline:  read_username (gate) -> segment_board -> recognize_board
            -> aggregate (dedup) -> value_portfolio
 
-Hashing constants (NORM_SIZE/BG/HASH_SIZE/COLOR_WEIGHT) and normalize_icon()
-MUST stay identical to whatever built reference.json (03). They live here now,
-so there's only one copy.
+FIX (scanner v3 - multi-color support):
+  - Replaces hardcoded red_mask() with bg_mask() which auto-detects whichever
+    of the 7 Adopt Me background colors the user has set, then masks on that.
+    Supported colors: red, pink, blue, purple, green, orange, black.
+  - detect_bg_color() samples a grid across the image and finds the closest
+    known color by median distance, making it robust to pet icon interference.
+  - bg_mask() uses a per-color tolerance tuned to each color's distance from
+    white (cell backgrounds), so no color is confused with a pet cell.
+  - _header_band() updated to use bg_mask() instead of red_mask().
+  - All other logic (badge detection, cell/box finding, OCR gate, hashing,
+    aggregation, valuation) is unchanged.
+
+FIX (scanner v2 - badge + OCR):
+  - find_verified_badges() now scales thresholds with H*W (total image area).
+  - read_username() returns a list of candidates across multiple PSM modes.
 """
 
 import os
 
 import numpy as np
 import requests
+import re
+from PIL import ImageOps
 
 try:
     import imagehash
-except ImportError:                       # only needed for recognition
+except ImportError:
     imagehash = None
 from PIL import Image
 from scipy import ndimage
 
 try:
     import pytesseract
-except ImportError:                       # only needed for the username gate
+except ImportError:
     pytesseract = None
 if pytesseract is not None and os.name == "nt":
     _tess = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -44,21 +52,22 @@ BG = (255, 255, 255)
 HASH_SIZE = 8
 COLOR_WEIGHT = 1.0
 
-RED_R_MIN, RED_GB_MAX, RED_GAP = 180, 150, 60
 MIN_AREA = 3000
 ASPECT_LO, ASPECT_HI = 0.75, 1.34
 MIN_FILL = 0.85
+CELL_BANNER_FRAC = 0.20  # top fraction of the image = UI chrome (username/avatar/buttons), never pets
 BOX_MIN_FRAC = 0.004
 CLUSTER_MIN_CELLS = 4
 CLUSTER_LO, CLUSTER_HI = 0.7, 1.4
 
-BADGE_AREA_LO_FRAC, BADGE_AREA_HI_FRAC = 0.0002, 0.0005
+BADGE_AREA_LO_FRAC = 0.0001
+BADGE_AREA_HI_FRAC = 0.0008
 BADGE_ASPECT_LO, BADGE_ASPECT_HI = 1.1, 1.7
 BADGE_FILL_LO, BADGE_FILL_HI = 0.30, 0.55
 BADGE_X_MARGIN, BADGE_Y_TOL = 20, 10
 
 # username gate
-HEADER_RED_FRAC = 0.30
+HEADER_BG_FRAC = 0.30   # renamed from HEADER_RED_FRAC — same threshold, any color
 HEADER_ROW_GAP = 3
 CENTER_LO, CENTER_HI = 0.20, 0.80
 WHITE_MIN = 200
@@ -66,7 +75,77 @@ USERNAME_MIN, USERNAME_MAX = 3, 20
 OCR_CONFIG = ("--psm 7 -c tessedit_char_whitelist="
               "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
 
-MAX_PAGES = 7  # one screenshot per in-game page; profiles cap at 7 pages
+MAX_PAGES = 7
+
+# ======================================================================
+# Multi-color background detection
+# ======================================================================
+# The 7 selectable background colors in Adopt Me (sampled from the color picker UI).
+# Tolerances are tuned per-color: tighter for colors close to white (pink, orange),
+# looser for colors far from white (red, green, black).
+_KNOWN_BG = {
+    "red":    {"rgb": (246,  67,  67), "tol": 70},
+    "pink":   {"rgb": (251, 169, 231), "tol": 50},   # close to white — tighter
+    "blue":   {"rgb": (110, 169, 226), "tol": 60},
+    "purple": {"rgb": (154, 102, 252), "tol": 60},
+    "green":  {"rgb": ( 44, 183, 121), "tol": 65},
+    "orange": {"rgb": (250, 205, 150), "tol": 55},   # close to white — tighter
+    "black":  {"rgb": ( 40,  35,  30), "tol": 40},
+    "gray": {"rgb": (104, 104, 104), "tol": 52},
+}
+
+
+def detect_bg_color(a):
+    """
+    Auto-detect which Adopt Me background color is in use.
+
+    Filters out near-white (pet cells / page) and very dark (text / outlines)
+    pixels, then picks the known color that the MOST remaining pixels fall within
+    tolerance of. Counting in-tolerance pixels measures how much of the board each
+    color actually covers — far more robust than a distance percentile, which let
+    abundant dark outline/text pixels drag neutral-gray boards toward 'black'.
+    Returns (name, rgb_tuple, tolerance).
+    """
+    R, G, B = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    brightness = (R.astype(float) + G + B) / 3
+    candidates_mask = (brightness < 230) & (brightness > 20)
+    flat = a[candidates_mask].astype(float)
+    if len(flat) < 500:
+        flat = a.reshape(-1, 3).astype(float)
+
+    best_name, best_count = "red", -1
+    for name, info in _KNOWN_BG.items():
+        kr, kg, kb = info["rgb"]
+        dists = np.sqrt(
+            (flat[:, 0] - kr) ** 2 +
+            (flat[:, 1] - kg) ** 2 +
+            (flat[:, 2] - kb) ** 2
+        )
+        count = int(np.count_nonzero(dists < info["tol"]))
+        if count > best_count:
+            best_count, best_name = count, name
+
+    info = _KNOWN_BG[best_name]
+    return best_name, info["rgb"], info["tol"]
+
+
+def bg_mask(a, color=None, tol=None):
+    """
+    Return a boolean mask that is True wherever a pixel matches the background color.
+    If color/tol are None, auto-detects from the image (costs one detect_bg_color call).
+    Drop-in replacement for the old red_mask().
+    """
+    if color is None:
+        _, color, tol = detect_bg_color(a)
+    kr, kg, kb = color
+    R, G, B = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    dist = np.sqrt(((R - kr) ** 2 + (G - kg) ** 2 + (B - kb) ** 2).astype(float))
+    return dist < tol
+
+
+# Keep red_mask as a thin alias so any external scripts that import it still work.
+def red_mask(a):
+    return bg_mask(a, color=_KNOWN_BG["red"]["rgb"], tol=_KNOWN_BG["red"]["tol"])
 
 
 # ======================================================================
@@ -74,12 +153,6 @@ MAX_PAGES = 7  # one screenshot per in-game page; profiles cap at 7 pages
 # ======================================================================
 def _arr(im):
     return np.asarray(im.convert("RGB")).astype(int)
-
-
-def red_mask(a):
-    R, G, B = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-    return ((R > RED_R_MIN) & (G < RED_GB_MAX) & (B < RED_GB_MAX)
-            & (R - G > RED_GAP) & (R - B > RED_GAP))
 
 
 def normalize_icon(img):
@@ -107,10 +180,13 @@ def _levenshtein(a, b):
 
 
 # ======================================================================
-# Segmentation  (== 05: box-aware + verified-gated)
+# Segmentation  (box-aware + verified-gated, now color-agnostic)
 # ======================================================================
-def find_cells(a):
-    lbl, n = ndimage.label(~red_mask(a))
+def find_cells(a, color=None, tol=None):
+    """Find pet cell regions — everything that is NOT the background color."""
+    mask = bg_mask(a, color, tol)
+    lbl, n = ndimage.label(~mask)
+    banner_cut = a.shape[0] * CELL_BANNER_FRAC
     cand = []
     for i in range(1, n + 1):
         ys, xs = np.where(lbl == i)
@@ -118,6 +194,11 @@ def find_cells(a):
             continue
         x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
         w, h = int(x1 - x0 + 1), int(y1 - y0 + 1)
+        # Reject UI chrome in the top banner (username / avatar / buttons live
+        # here — never pets). A component sitting fully inside the banner band
+        # is skipped before the shape checks.
+        if y1 <= banner_cut:
+            continue
         comp = ndimage.binary_fill_holes(lbl[y0:y1 + 1, x0:x1 + 1] == i)
         fill = int(comp.sum()) / (w * h)
         if ASPECT_LO < w / h < ASPECT_HI and fill >= MIN_FILL:
@@ -125,8 +206,10 @@ def find_cells(a):
     return cand
 
 
-def find_boxes(a):
-    lbl, n = ndimage.label(red_mask(a))
+def find_boxes(a, color=None, tol=None):
+    """Find the colored box regions (background-colored areas large enough to be a box)."""
+    mask = bg_mask(a, color, tol)
+    lbl, n = ndimage.label(mask)
     H, W = a.shape[0], a.shape[1]
     out = []
     for i in range(1, n + 1):
@@ -139,12 +222,17 @@ def find_boxes(a):
 
 
 def find_verified_badges(a):
+    """Detect green VERIFIED OWNER badge centers. Scales with image area (v2 fix)."""
     R, G, B = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-    W = a.shape[1]
+    H, W = a.shape[0], a.shape[1]
+    image_area = H * W
+
     green = ((G > 110) & (G < 210) & (G - R > 35) & (G - B > 35)
              & (R < 160) & (B < 160))
     lbl, n = ndimage.label(green)
-    lo, hi = BADGE_AREA_LO_FRAC * W * W, BADGE_AREA_HI_FRAC * W * W
+    lo = BADGE_AREA_LO_FRAC * image_area
+    hi = BADGE_AREA_HI_FRAC * image_area
+
     out = []
     for i in range(1, n + 1):
         ys, xs = np.where(lbl == i)
@@ -153,8 +241,8 @@ def find_verified_badges(a):
             continue
         x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
         w, h = x1 - x0 + 1, y1 - y0 + 1
-        if BADGE_ASPECT_LO < w / h < BADGE_ASPECT_HI and \
-           BADGE_FILL_LO < area / (w * h) < BADGE_FILL_HI:
+        if (BADGE_ASPECT_LO < w / h < BADGE_ASPECT_HI and
+                BADGE_FILL_LO < area / (w * h) < BADGE_FILL_HI):
             out.append((int(x0 + w / 2), int(y0 + h / 2)))
     return out
 
@@ -179,10 +267,17 @@ def reading_order(cells, med_h):
 
 
 def segment_board(im):
-    """Return boxes: [{box_id, bbox, verified, cell_count, cells:[bbox,...]}].
-    Unverified boxes carry cell_count but no cell bboxes (they're skipped)."""
+    """
+    Return boxes: [{box_id, bbox, verified, cell_count, cells:[bbox,...]}].
+    Now auto-detects background color so any of the 7 Adopt Me colors work.
+    """
     a = _arr(im)
-    cells, boxes, badges = find_cells(a), find_boxes(a), find_verified_badges(a)
+    # Detect once, pass to all three finders so we don't re-detect 3x
+    bg_name, color, tol = detect_bg_color(a)
+    cells = find_cells(a, color, tol)
+    boxes = find_boxes(a, color, tol)
+    badges = find_verified_badges(a)
+
     groups = {i: [] for i in range(len(boxes))}
     for c in cells:
         cx, cy = c[0] + c[2] / 2, c[1] + c[3] / 2
@@ -192,10 +287,12 @@ def segment_board(im):
                 best, best_area = bi, bw * bh
         if best is not None:
             groups[best].append(c)
+
     for bi, cs in groups.items():
         if len(cs) >= CLUSTER_MIN_CELLS:
             med = float(np.median([c[2] for c in cs]))
             groups[bi] = [c for c in cs if CLUSTER_LO * med < c[2] < CLUSTER_HI * med]
+
     real = [bi for bi in groups if groups[bi]]
 
     verified = set()
@@ -203,7 +300,8 @@ def segment_board(im):
         cand = []
         for bi in real:
             x, y, w, h = boxes[bi]
-            if x - BADGE_X_MARGIN <= bx_c <= x + w + BADGE_X_MARGIN and y > by_c - BADGE_Y_TOL:
+            if (x - BADGE_X_MARGIN <= bx_c <= x + w + BADGE_X_MARGIN
+                    and y > by_c - BADGE_Y_TOL):
                 cand.append((y - by_c, bi))
         if cand:
             cand.sort()
@@ -216,14 +314,15 @@ def segment_board(im):
         med_h = float(np.median([c[3] for c in cs]))
         cs = reading_order(cs, med_h)
         is_v = bi in verified
-        out.append({"box_id": box_id, "bbox": list(boxes[bi]), "verified": is_v,
-                    "cell_count": len(cs),
-                    "cells": [list(c) for c in cs] if is_v else []})
+        out.append({"box_id": box_id, "bbox": list(boxes[bi]),
+                    "verified": is_v, "cell_count": len(cs),
+                    "cells": [list(c) for c in cs] if is_v else [],
+                    "bg_color": bg_name})
     return out
 
 
 # ======================================================================
-# Recognition  (== 06: species match + N/M/F/R badges)
+# Recognition  (species match + N/M/F/R badges)
 # ======================================================================
 def detect_badges(crop):
     arr = np.asarray(crop.convert("RGB")).astype(int)
@@ -231,14 +330,14 @@ def detect_badges(crop):
     band = arr[int(h * 0.80):, :]
     Rc, Gc, Bc = band[:, :, 0], band[:, :, 1], band[:, :, 2]
     masks = {
-        "neon": (Gc > 120) & (Gc - Rc > 30) & (Gc - Bc > 30),
-        "mega": (Bc > 110) & (Rc > 100) & (Gc < 120) & (Bc - Gc > 50)
-                & (Rc - Gc > 40) & (Bc >= Rc - 30),
-        "fly":  (Bc > 130) & (Rc < 130) & (Gc > 110) & (Bc - Rc > 40),
-        "ride": (Rc > 180) & (Bc > 90) & (Rc - Gc > 60) & (Bc - Gc > 10),
+        "neon":  (Gc > 120) & (Gc - Rc > 30) & (Gc - Bc > 30),
+        "mega":  (Bc > 110) & (Rc > 100) & (Gc < 120) & (Bc - Gc > 50)
+                 & (Rc - Gc > 40) & (Bc >= Rc - 30),
+        "fly":   (Bc > 130) & (Rc < 130) & (Gc > 110) & (Bc - Rc > 40),
+        "ride":  (Rc > 180) & (Bc > 90) & (Rc - Gc > 60) & (Bc - Gc > 10),
     }
     amax = 0.10 * w * w
-    amin_round, amin_mega = 0.022 * w * w, 0.010 * w * w
+    amin_round, amin_mega = 0.018 * w * w, 0.010 * w * w  # round floor lowered: ride chips run ~0.022*w^2, smaller than fly
     res = {"neon": False, "mega": False, "fly": False, "ride": False}
     for k, m in masks.items():
         amin = amin_mega if k == "mega" else amin_round
@@ -292,9 +391,7 @@ def best_match(cell_img, library):
 
 
 def recognize_board(im, library):
-    """Segment + match + badge a single screenshot, in memory.
-    Returns {"pets":[entry,...], "boxes":[meta,...]} where each pet carries its
-    box_id (local to this image)."""
+    """Segment + match + badge a single screenshot, in memory."""
     boxes = segment_board(im)
     pets = []
     for box in boxes:
@@ -311,12 +408,13 @@ def recognize_board(im, library):
             m["full_name"] = (variant_prefix(b) + " " + m["pet"]).strip()
             pets.append(m)
     meta = [{"box_id": b["box_id"], "bbox": b["bbox"], "verified": b["verified"],
-             "cell_count": b["cell_count"]} for b in boxes]
+             "cell_count": b["cell_count"], "bg_color": b.get("bg_color", "unknown")}
+            for b in boxes]
     return {"pets": pets, "boxes": meta}
 
 
 # ======================================================================
-# Aggregation / dedup  (== 09: one box per variant)
+# Aggregation / dedup
 # ======================================================================
 _SEV = {"confident": 0, "review": 1, "weak": 2}
 _SEV_INV = {v: k for k, v in _SEV.items()}
@@ -346,7 +444,6 @@ def _key_of(entry):
 
 
 def aggregate(boards, on_conflict="ask"):
-    """boards: list of (board_label, [entry,...]). See 09 for the contract."""
     from collections import defaultdict
     meta, per_board = {}, {}
     key_boards = defaultdict(dict)
@@ -376,7 +473,9 @@ def aggregate(boards, on_conflict="ask"):
     for k, bx in key_boards.items():
         if len(bx) > 1:
             conflicts.append({"pet_id": meta[k]["pet_id"], "name": meta[k]["name"],
-                              "variant": variant_label(meta[k]["neon"], meta[k]["fly"], meta[k]["ride"]),
+                              "variant": variant_label(meta[k]["neon"],
+                                                       meta[k]["fly"],
+                                                       meta[k]["ride"]),
                               "boxes": dict(bx)})
 
     if (duplicate_boards or conflicts) and on_conflict == "ask":
@@ -385,7 +484,8 @@ def aggregate(boards, on_conflict="ask"):
 
     items = []
     for k, bx in key_boards.items():
-        count = max(bx.values()) if (len(bx) > 1 and on_conflict == "dedupe") else sum(bx.values())
+        count = (max(bx.values()) if (len(bx) > 1 and on_conflict == "dedupe")
+                 else sum(bx.values()))
         m = meta[k]
         items.append({"pet_id": m["pet_id"], "name": m["name"], "neon": m["neon"],
                       "fly": m["fly"], "ride": m["ride"], "count": count,
@@ -393,13 +493,12 @@ def aggregate(boards, on_conflict="ask"):
     items.sort(key=lambda x: (str(x["name"]), x["neon"], x["fly"], x["ride"]))
     out = {"status": "ok", "items": items}
     if duplicate_boards or conflicts:
-        out["warnings"] = {"duplicate_boards": duplicate_boards, "deduped_conflicts": conflicts}
+        out["warnings"] = {"duplicate_boards": duplicate_boards,
+                           "deduped_conflicts": conflicts}
     return out
 
 
 def boards_from_pages(pages):
-    """pages: list of recognize_board(...) results (one per screenshot).
-    Returns aggregate()-ready boards keyed (page#box)."""
     boards = {}
     for pi, page in enumerate(pages):
         for e in page["pets"]:
@@ -409,7 +508,7 @@ def boards_from_pages(pages):
 
 
 # ======================================================================
-# Valuation  (== 08: value * count, against Supabase)
+# Valuation
 # ======================================================================
 def _supa_get(url, key, table, select, page=1000):
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
@@ -452,16 +551,20 @@ def value_portfolio(items, variant_map, value_map):
             total += subtotal
             if it.get("confidence") == "confident":
                 confident_total += subtotal
-        rows.append({**it, "pet_variant_id": vid, "unit_value": value, "subtotal": subtotal})
+        rows.append({**it, "pet_variant_id": vid,
+                     "unit_value": value, "subtotal": subtotal})
     return rows, {"total": total, "confident_total": confident_total}, missing
 
 
 # ======================================================================
-# Username gate  (== 10)
+# Username gate
 # ======================================================================
 def _header_band(a):
-    frac = red_mask(a).mean(axis=1)
-    rows = np.where(frac > HEADER_RED_FRAC)[0]
+    """Find the header row band using the background color mask."""
+    _, color, tol = detect_bg_color(a)
+    mask = bg_mask(a, color, tol)
+    frac = mask.mean(axis=1)
+    rows = np.where(frac > HEADER_BG_FRAC)[0]
     if len(rows) == 0:
         return None
     y0 = y1 = rows[0]
@@ -472,39 +575,113 @@ def _header_band(a):
             break
     return int(y0), int(y1)
 
+# ==========================================================================
+# PASTE INTO common.py — replaces ONLY your existing read_username() function.
+#
+# Steps:
+#   1. Make sure these imports exist at the top of common.py (add any missing):
+#          import re
+#          import numpy as np
+#          from PIL import Image, ImageOps
+#          import pytesseract            # (you already use this for OCR)
+#   2. DELETE your current `def read_username(...):` function.
+#   3. Paste everything below in its place.
+#
+# Helper names are prefixed `_username_` so they will NOT collide with your
+# existing _header_band() / bg_mask() / detect_bg_color(), etc.
+# ==========================================================================
 
-def read_username(im):
+_USERNAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+_USERNAME_PSM_MODES = (7, 8, 6)
+_USERNAME_HEADER_FRAC = 0.18  # top slice of the board holding the banner; tune if needed
+
+
+def _username_band(im):
+    """Crop the top header band that holds the username banner."""
+    rgb = im.convert("RGB")
+    w, h = rgb.size
+    return rgb.crop((0, 0, w, max(1, int(h * _USERNAME_HEADER_FRAC))))
+
+
+def _username_ocr_variants(band):
+    """Two preprocessings for OCR:
+    (1) isolate light banner text -> black-on-white (Tesseract's preferred input),
+    (2) plain autocontrast grayscale as a fallback for dark text."""
+    a = np.asarray(band).astype(np.int16)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    brightness = (r + g + b) / 3.0
+    saturation = np.maximum.reduce([r, g, b]) - np.minimum.reduce([r, g, b])
+
+    light_text = (brightness > 180) & (saturation < 45)   # white-ish text on colored banner
+    v1 = np.where(light_text, 0, 255).astype(np.uint8)    # dark text on white
+    v2 = np.asarray(ImageOps.autocontrast(band.convert("L")))
+
+    out = []
+    for arr in (v1, v2):
+        img = Image.fromarray(arr, mode="L")
+        scale = 3 if max(img.size) < 600 else 2           # small headers OCR poorly
+        out.append(img.resize((img.width * scale, img.height * scale), Image.LANCZOS))
+    return out
+
+
+def read_username(im, debug_dir=None):
+    """Return deduped candidate usernames from the header banner.
+
+    Pools results across 2 preprocessings x 3 PSM modes. match_username() accepts
+    the best within Levenshtein 1, so a wide net is safe — junk won't match.
+
+    Pass debug_dir to dump the preprocessed images Tesseract actually sees.
+    """
     if pytesseract is None:
-        raise RuntimeError("pytesseract + tesseract-ocr required for the username gate")
-    a = _arr(im)
-    H, W = a.shape[0], a.shape[1]
-    band = _header_band(a)
-    if band is None:
-        return None
-    y0, y1 = band
-    x0, x1 = int(W * CENTER_LO), int(W * CENTER_HI)
-    crop = a[y0:y1 + 1, x0:x1]
-    R, G, B = crop[:, :, 0], crop[:, :, 1], crop[:, :, 2]
-    white = (R > WHITE_MIN) & (G > WHITE_MIN) & (B > WHITE_MIN)
-    if white.mean() < 0.002:
-        return None
-    ocr_img = Image.fromarray(np.where(white, 0, 255).astype("uint8"))
-    raw = pytesseract.image_to_string(ocr_img, config=OCR_CONFIG).strip()
-    cleaned = "".join(ch for ch in raw if ch.isalnum() or ch == "_")
-    return cleaned[:USERNAME_MAX] if len(cleaned) >= USERNAME_MIN else None
+        raise RuntimeError("pytesseract not installed")
 
+    band = _username_band(im)
+    variants = _username_ocr_variants(band)
 
-def match_username(detected, account):
-    if not detected:
-        return {"status": "missing", "detected": detected, "account": account,
+    if debug_dir:
+        import os
+        os.makedirs(debug_dir, exist_ok=True)
+        band.save(os.path.join(debug_dir, "header_raw.png"))
+        for i, v in enumerate(variants):
+            v.save(os.path.join(debug_dir, f"header_ocr_{i}.png"))
+
+    seen = {}
+    for variant in variants:
+        for psm in _USERNAME_PSM_MODES:
+            cfg = f"--psm {psm} -c tessedit_char_whitelist={_USERNAME_CHARS}"
+            try:
+                raw = pytesseract.image_to_string(variant, config=cfg)
+            except Exception:
+                continue
+            for line in raw.splitlines():
+                cand = re.sub(r"[^A-Za-z0-9_]", "", line).strip()
+                if 3 <= len(cand) <= 20:                  # Roblox username length bounds
+                    seen.setdefault(cand, None)
+    return list(seen.keys())
+
+def match_username(detected_list, account):
+    if not detected_list:
+        return {"status": "missing", "detected": None, "account": account,
                 "distance": None,
-                "message": "We couldn't read a username in your screenshot. Please "
-                           "submit a picture that shows your Roblox username in the header."}
-    dist = _levenshtein(detected.lower(), account.lower())
-    if dist == 0:
-        return {"status": "ok", "detected": detected, "account": account,
-                "distance": 0, "message": f"Username verified ({detected})."}
-    return {"status": "mismatch", "detected": detected, "account": account, "distance": dist,
-            "message": (f"The username in your picture (\"{detected}\") doesn't match your "
-                        f"account (\"{account}\"). Submit a matching picture, or update the "
-                        f"Roblox username on your account.")}
+                "message": "We couldn't read a username in your screenshot. "
+                           "Please submit a picture that shows your Roblox username "
+                           "in the header."}
+    best_candidate = None
+    best_dist = float("inf")
+    for candidate in detected_list:
+        dist = _levenshtein(candidate.lower(), account.lower())
+        if dist < best_dist:
+            best_dist = dist
+            best_candidate = candidate
+    if best_dist == 0:
+        return {"status": "ok", "detected": best_candidate, "account": account,
+                "distance": 0, "message": f"Username verified ({best_candidate})."}
+    if best_dist == 1:
+        return {"status": "ok", "detected": best_candidate, "account": account,
+                "distance": 1,
+                "message": f"Username verified ({best_candidate} ≈ {account})."}
+    return {"status": "mismatch", "detected": best_candidate, "account": account,
+            "distance": best_dist,
+            "message": (f"The username in your picture (\"{best_candidate}\") doesn't "
+                        f"match your account (\"{account}\"). Submit a matching picture, "
+                        f"or update the Roblox username on your account.")}

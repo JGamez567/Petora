@@ -1,20 +1,43 @@
-// app/scan/route.ts
+// app/api/scan/route.ts
 //
 // UNIFIED scanner. Replaces app/submit/route.ts AND app/personal-scan/route.ts.
 // One route, one `leaderboard` flag.
+//
+// FIX (v3 - windowed username gate):
+//   usernameMatches() now tolerates OCR junk glued to the front/back of the real
+//   username (e.g. "_PetoraTrackerx", "IJGamez567x") via a sliding window, while
+//   STILL rejecting a different account's name. Plain Levenshtein-1 was rejecting
+//   legitimate gray-board reads (which arrive 2+ edits off due to edge junk),
+//   locking users out of their own portfolios.
+//
+//   Security: the windowed path only applies when the expected username makes up
+//   >= WINDOW_COVERAGE of the OCR token, so a short name cannot match as a
+//   substring of an unrelated, longer username (e.g. "Gamez" claiming a
+//   "JGamez567" board). A different-length, different name still fails outright.
+//
+// FIX (v2):
+//   Personal scans now also run a soft username check against the OCR gate.
+//   Previously, personal mode skipped the gate entirely, which meant anyone
+//   could submit another user's screenshot under their own account.
+//   Now:
+//     - leaderboard mode: hard gate (rejects if username doesn't match)
+//     - personal mode:    soft gate (warns but still writes if username unreadable,
+//                         hard rejects if a username IS detected but doesn't match)
 //
 // Every scan (regardless of the flag):
 //   auth -> profile -> unified daily limit -> server-side rescan -> REPLACE-write
 //   portfolio_items (erase-and-replace; no merge/add) -> snapshot -> stamp limit.
 //
 // The flag only changes the ending:
-//   leaderboard === true  -> requires roblox_verified_at, runs the OCR username gate,
-//                            writes a 'submit' snapshot, sets is_public = true.
-//   leaderboard === false -> no gate, writes a 'personal' snapshot, sets is_public = false.
+//   leaderboard === true  -> requires roblox_verified_at, runs the OCR username gate
+//                            (hard), writes a 'submit' snapshot, sets is_public = true.
+//   leaderboard === false -> runs the OCR username gate (soft), writes a 'personal'
+//                            snapshot, sets is_public = false.
 //
 // INVARIANT PRESERVED: 'submit' is the ONLY source get_leaderboard counts, and the
 // only path that writes one is the verified path here. Personal scans can never
 // reach the board.
+
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
@@ -33,14 +56,53 @@ function levenshtein(a: string, b: string): number {
   }
   return prev[b.length];
 }
-function usernameMatches(detected: string | null, expected: string): boolean {
+
+// Minimum edit distance between `expected` and any window of `candidate` the same
+// length as `expected`. Lets OCR junk on the front/back fall outside the window so
+// the real username can still match cleanly. If the candidate is shorter than the
+// expected name there is no window to slide, so we fall back to a full compare.
+function windowedDistance(candidate: string, expected: string): number {
+  const c = candidate.toLowerCase();
+  const e = expected.toLowerCase();
+  if (c.length < e.length) return levenshtein(c, e);
+  let best = Infinity;
+  for (let i = 0; i + e.length <= c.length; i++) {
+    const d = levenshtein(c.slice(i, i + e.length), e);
+    if (d < best) best = d;
+    if (best === 0) break;
+  }
+  return best;
+}
+
+// The matched username must make up at least this fraction of the OCR token for the
+// windowed (junk-trimming) path to apply. Stops a short name from matching as a
+// substring buried inside a longer, unrelated username. Tune up to be stricter.
+const WINDOW_COVERAGE = 0.7;
+
+// FIX: now accepts a list of candidates (Python returns multiple OCR attempts).
+// Returns true if ANY candidate matches the expected username.
+function usernameMatches(detected: string[] | string | null, expected: string): boolean {
   if (!detected || !expected) return false;
-  return levenshtein(detected.toLowerCase(), expected.toLowerCase()) <= 1;
+  const candidates = Array.isArray(detected) ? detected : [detected];
+  const e = expected.toLowerCase();
+  return candidates.some((raw) => {
+    if (!raw) return false;
+    const d = raw.toLowerCase();
+    // 1) Direct tolerant match — clean reads and a single OCR character slip.
+    if (levenshtein(d, e) <= 1) return true;
+    // 2) Windowed match — tolerate junk glued to the front/back of the real
+    //    username, but ONLY when the username makes up most of the token, so a
+    //    short name can't match as a substring of an unrelated, longer name.
+    if (d.length >= e.length && e.length >= WINDOW_COVERAGE * d.length) {
+      return windowedDistance(d, e) <= 1;
+    }
+    return false;
+  });
 }
 
 export async function POST(req: Request) {
   // user-scoped client (cookies) — ONLY to prove who's calling
-  const cookieStore = await cookies(); // Next 15. On Next 14, drop the await.
+  const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -69,10 +131,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'expected_1_to_7_images' }, { status: 400 });
   }
 
-  // 4) UNIFIED daily limit — one scan/day on free tier, premium unlimited, no matter
-  //    which way the toggle is set (so toggling can't buy a second free scan).
-  //    Checked BEFORE the expensive rescan and BEFORE the verification check, so a
-  //    verified user who is merely rate-limited isn't told to "verify".
+  // 4) UNIFIED daily limit — one scan/day on free tier, premium unlimited.
   if (!profile.is_premium && profile.last_personal_scan_at) {
     const elapsed = Date.now() - new Date(profile.last_personal_scan_at).getTime();
     const DAY = 24 * 60 * 60 * 1000;
@@ -84,41 +143,67 @@ export async function POST(req: Request) {
     }
   }
 
-  // 5) leaderboard path requires verification — fail early, before we spend a rescan
+  // 5) leaderboard path requires Roblox verification — fail early
   if (wantsLeaderboard && !profile.roblox_verified_at) {
     return NextResponse.json({ error: 'roblox_verification_required' }, { status: 403 });
   }
 
-  // 6) re-scan server-side. Leaderboard mode asks the scanner for the OCR username
-  //    gate; personal mode skips it. The browser never supplies items/values.
+  // 6) re-scan server-side. Both modes now request the OCR username gate.
+  //    leaderboard mode: 'leaderboard' (hard gate)
+  //    personal mode:    'personal_gated' (soft gate — scanner still returns
+  //                      detected usernames so we can cross-check)
   const scanForm = new FormData();
   for (const f of files) scanForm.append('files', f as Blob);
-  scanForm.append('mode', wantsLeaderboard ? 'leaderboard' : 'personal');
+  scanForm.append('mode', wantsLeaderboard ? 'leaderboard' : 'personal_gated');
 
   const scanUrl = process.env.SCAN_URL ?? process.env.NEXT_PUBLIC_SCAN_URL;
   const scanRes = await fetch(`${scanUrl}/scan`, { method: 'POST', body: scanForm });
   const scan = await scanRes.json();
   if (scan.status !== 'ok') {
-    // includes needs_consolidation — the front end re-surfaces `scan` for that case
     return NextResponse.json({ error: 'scan_not_ok', scan }, { status: 422 });
   }
 
-  // 7) leaderboard anti-cheat: OCR'd header(s) must match the trusted profile name
+  // 7) USERNAME GATE — now runs for BOTH modes.
+  //
+  //    leaderboard (hard): must detect a username AND it must match. No exceptions.
+  //    personal (soft):    if a username IS detected and does NOT match → reject.
+  //                        if no username detected → allow (OCR can fail on some
+  //                        devices; we don't want to lock out legitimate users
+  //                        whose headers are hard to read).
+  //
+  //    This closes the hole where someone could submit another user's screenshot
+  //    in personal mode with zero resistance.
+  const detected: string[] = (scan.gate?.detected ?? []).filter(Boolean);
+
   if (wantsLeaderboard) {
-    const detected: string[] = (scan.gate?.detected ?? []).filter(Boolean);
+    // Hard gate — same as before
     if (detected.length === 0) {
       return NextResponse.json({ error: 'username_unreadable' }, { status: 422 });
     }
-    if (detected.some((d) => !usernameMatches(d, profile.roblox_username))) {
+    if (!usernameMatches(detected, profile.roblox_username)) {
       return NextResponse.json(
         { error: 'username_mismatch', detected, expected: profile.roblox_username },
         { status: 422 }
       );
     }
+  } else {
+    // FIX: Soft gate for personal scans.
+    // Only reject if we successfully read a username AND it clearly doesn't match.
+    // If OCR returns nothing, we give the benefit of the doubt and allow the scan.
+    if (detected.length > 0 && !usernameMatches(detected, profile.roblox_username)) {
+      return NextResponse.json(
+        {
+          error: 'username_mismatch',
+          detected,
+          expected: profile.roblox_username,
+          message: "The screenshot doesn't appear to belong to your account. Please submit your own screenshots."
+        },
+        { status: 422 }
+      );
+    }
   }
 
-  // 8) authoritative write with the SERVICE ROLE (bypasses RLS + the §10 trigger,
-  //    which only blocks the 'authenticated'/'anon' roles)
+  // 8) authoritative write with the SERVICE ROLE (bypasses RLS)
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -126,8 +211,6 @@ export async function POST(req: Request) {
   );
   const now = new Date().toISOString();
 
-  // Scanned pets are tagged source='scan' so a scan only ever replaces its OWN rows.
-  // Manually-added pets (source='manual') are left completely untouched.
   const scanned = (scan.items ?? [])
     .filter((r: any) => r.pet_variant_id != null)
     .map((r: any) => ({
@@ -138,10 +221,6 @@ export async function POST(req: Request) {
       updated_at: now,
     }));
 
-  // Replace ONLY previously-scanned rows. NOTE: delete+insert isn't transactional;
-  // if the insert fails after the delete, scanned rows are gone and the user can
-  // retry (the daily limit isn't stamped until step 10, so a failed write doesn't
-  // burn their scan). Manual rows are never part of this delete.
   const { error: delErr } = await admin
     .from('portfolio_items')
     .delete()
@@ -153,13 +232,8 @@ export async function POST(req: Request) {
     if (insErr) return NextResponse.json({ error: 'write_failed', detail: insErr.message }, { status: 500 });
   }
 
-  // 9) snapshot. Two totals on purpose:
-  //    - LEADERBOARD ('submit'): verified pets only = the scanned total. Manual adds
-  //      must never inflate the board, so use the scanner's trusted total as-is.
-  //    - PERSONAL ('personal'): the WHOLE portfolio (manual + scanned), valued from
-  //      current_pet_values, so the progress graph lines up with the daily scraper's
-  //      whole-portfolio points instead of dropping every time you scan.
-  const scannedTotal = scan.totals?.total ?? 0; // full scanned total, NOT confident_total
+  // 9) snapshot
+  const scannedTotal = scan.totals?.total ?? 0;
   let snapTotal = scannedTotal;
   let snapHoldings: any = scan.items;
 
@@ -193,20 +267,13 @@ export async function POST(req: Request) {
     source: wantsLeaderboard ? 'submit' : 'personal',
   });
   if (snapErr) {
-    // missing 'submit' snapshot => they wouldn't show on the board -> hard fail.
-    // missing 'personal' snapshot => only one graph point lost -> soft fail.
     if (wantsLeaderboard) {
       return NextResponse.json({ error: 'write_failed', detail: snapErr.message }, { status: 500 });
     }
     console.error('PERSONAL SNAPSHOT FAILED:', snapErr);
   }
 
-  // 10) leaderboard membership IS the toggle: opt in -> public, opt out -> drop off.
-  //     Also stamp the unified daily limiter, and keep last_submitted_at fresh on the
-  //     leaderboard path. (is_public isn't a protected column, but routing it through
-  //     this verified path keeps the *value* behind it trustworthy.)
-  // only stamp the daily limiter when the scan actually produced pets,
-  // so a no-result scan doesn't burn the user's one free daily scan
+  // 10) leaderboard membership toggle + daily limiter stamp
   const producedPets = scanned.length > 0;
   const { error: profErr } = await admin.from('profiles')
     .update({

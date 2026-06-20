@@ -3,18 +3,22 @@ scan_service.py  --  one HTTP endpoint that runs the whole scanner in-process.
 
     POST /scan   (multipart/form-data)
       files    : 1..7 board screenshots (one per in-game page)
-      mode     : "personal" | "leaderboard"   (default "personal")
+      mode     : "personal" | "personal_gated" | "leaderboard"   (default "personal")
       account  : required when mode == "leaderboard" (the user's Roblox username)
+
+FIX (v2):
+  - Added "personal_gated" mode. Behaves like "personal" but also runs the OCR
+    username gate and returns detected names in the response. This lets route.ts
+    cross-check that the screenshot belongs to the signed-in user before writing
+    to their portfolio — closing the hole where anyone could submit someone else's
+    screenshot under their own account.
+  - "personal" mode (legacy) still skips the gate entirely so existing callers
+    that don't pass a mode aren't broken.
+  - Gate now flattens candidates: read_username() returns a list per image, so
+    we flatten to a single deduplicated list across all pages.
 
 It calls common.py:  read_username (gate) -> recognize_board (segment+match+badge)
 -> aggregate (one-box-per-variant dedup) -> value_portfolio (value * count).
-
-Deploy like the scraper (a small Python service on Render). The Next.js app
-uploads to /scan and renders the result + the correction UX. NOTE: corrections
-themselves are NOT applied here -- /scan only recognizes and values. The
-asymmetric rule (auto-accept downgrades, queue upgrades for review) belongs in a
-separate /submit endpoint that writes portfolio_items, so a recognition call can
-never inflate a leaderboard total on its own.
 
 Env:
   REFERENCE_PATH   path to reference.json   (default ./data/reference.json)
@@ -87,6 +91,28 @@ def _read_images(files):
     return images
 
 
+def _run_gate(images):
+    """
+    Run OCR username detection across all uploaded pages.
+    read_username() now returns a list of candidates per image (multiple PSM
+    modes). We flatten and deduplicate across all pages so route.ts gets one
+    clean list to check against the verified profile username.
+    Returns None if pytesseract isn't available (non-blocking).
+    """
+    try:
+        seen = set()
+        candidates = []
+        for img in images:
+            for name in cm.read_username(img):
+                if name and name not in seen:
+                    seen.add(name)
+                    candidates.append(name)
+        return {"detected": candidates}
+    except RuntimeError:
+        # pytesseract not installed — gate unavailable, route.ts soft-allows
+        return {"detected": []}
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
@@ -98,15 +124,21 @@ def scan(files: list[UploadFile] = File(...),
     images = _read_images(files)
     library = _library()
 
-    # 1) Username gate -- leaderboard submissions only.
-    # 1) OCR the header username(s) as EVIDENCE only (leaderboard mode).
-    #    NOT an identity gate: /scan has no auth context, so a client-supplied
-    #    account name is just a forgeable string compared against a forgeable
-    #    screenshot. The real check -- OCR'd name vs the OAuth-verified
-    #    roblox_username -- happens in /submit, which knows the signed-in user.
-    gate = None
-    if mode == "leaderboard":
-        gate = {"detected": [cm.read_username(img) for img in images]}
+    # 1) Username gate.
+    #
+    #    leaderboard:     always run — route.ts hard-rejects on mismatch.
+    #    personal_gated:  FIX — also run so route.ts can soft-reject if a
+    #                     username IS detected but doesn't match the signed-in user.
+    #    personal:        skip (legacy behaviour — no gate, gate=None in response).
+    #
+    #    NOTE: /scan has no auth context so it can't enforce the match itself.
+    #    It just does the OCR and returns the candidates. The real enforcement
+    #    (OCR'd name vs OAuth-verified roblox_username in profiles) happens in
+    #    route.ts which knows who is signed in.
+    if mode in ("leaderboard", "personal_gated"):
+        gate = _run_gate(images)
+    else:
+        gate = None
 
     # 2) Recognize every page (segment + match + badges; unverified boxes skipped).
     pages = [cm.recognize_board(img, library) for img in images]

@@ -90,10 +90,10 @@ export default function PetScanner() {
             "To appear on the leaderboard, verify your Roblox account first on the Verification page. You can still scan privately by turning the leaderboard toggle off.",
           rate_limited: `You've used your scan for today. Try again in ${data.hours_left ?? 24}h.`,
           username_unreadable:
-            "We couldn't read a Roblox username on this board. Upload a screenshot that clearly shows the username header for the account you verified with — or turn the leaderboard toggle off to save privately.",
+            "We couldn't read a Roblox username on this Adopt Me profile. Upload a screenshot that clearly shows the username header for the account you verified with — or turn the leaderboard toggle off to save privately.",
           username_mismatch:
-            "This board isn't from your verified Roblox account. Submit a board from the account you verified with, or turn the leaderboard toggle off to save privately.",
-          scan_not_ok: "This board needs fixing before it can be saved.",
+            "This Adopt Me profile isn't from your verified Roblox account. Submit a profile from the account you verified with, or turn the leaderboard toggle off to save privately.",
+          scan_not_ok: "This Adopt Me profile needs fixing before it can be saved.",
           write_failed: "Something went wrong saving. Please try again.",
         };
         setError(map[data.error] || `Scan failed (${res.status}).`);
@@ -121,7 +121,7 @@ export default function PetScanner() {
         Scan your pets
       </h1>
 
-      {/* Pre-scan checklist — the four things that make a board scannable */}
+      {/* Pre-scan checklist — the four things that make a profile scannable */}
       <div className="petora-card p-5">
         <p className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
           Before you scan
@@ -192,7 +192,7 @@ export default function PetScanner() {
         onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
         onClick={() => inputRef.current?.click()}
         className="cursor-pointer rounded-xl border-2 border-dashed border-[color:var(--line-2)] bg-[rgba(168,139,250,0.04)] p-8 text-center transition hover:border-[color:var(--violet)] hover:bg-[rgba(168,139,250,0.07)]">
-        <p className="text-sm text-[color:var(--muted)]">Drop board screenshots here, or <span className="font-medium text-[color:var(--lilac)] underline">choose files</span></p>
+        <p className="text-sm text-[color:var(--muted)]">Drop your Adopt Me profile screenshots here, or <span className="font-medium text-[color:var(--lilac)] underline">choose files</span></p>
         <p className="mt-1 text-xs text-[color:var(--muted)] opacity-70">Up to {MAX_PAGES} pages · {files.length}/{MAX_PAGES} added</p>
         <input ref={inputRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
       </div>
@@ -204,7 +204,7 @@ export default function PetScanner() {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={URL.createObjectURL(f)} alt={f.name} className="h-20 w-28 rounded-lg border border-[color:var(--line)] object-cover" />
               <button onClick={(e) => { e.stopPropagation(); removeFile(i); }}
-                className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full border border-[color:var(--line-2)] bg-[color:var(--surface-2)] text-xs text-[color:var(--text)]" aria-label={`Remove ${f.name}`}>×</button>
+                className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-[color:var(--line-2)] bg-[color:var(--surface-2)] text-sm text-[color:var(--text)]" aria-label={`Remove ${f.name}`}>×</button>
             </div>
           ))}
         </div>

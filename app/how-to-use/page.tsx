@@ -4,7 +4,7 @@ import Link from "next/link";
 export const metadata = {
   title: "How to use Petora",
   description:
-    "Verify your Roblox account, scan your pet board, and climb the Petora leaderboard.",
+    "Verify your Roblox account, scan your Adopt Me profile, and climb the Petora leaderboard.",
 };
 
 const steps = [
@@ -13,12 +13,12 @@ const steps = [
     body: "Connect your Roblox account once so the leaderboard can prove the pets you submit are really yours. You'll only do this a single time — find it under Roblox Verification in the menu.",
   },
   {
-    title: "Open your pet board in Adopt Me",
-    body: "In the game, open the board you want to submit so every pet you're claiming is visible on screen. Make sure the Verified Owner badge is showing — that's what Petora checks against your account.",
+    title: "Open your Adopt Me profile",
+    body: "In the game, open the Adopt Me profile you want to submit so every pet you're claiming is visible on screen. Make sure the Verified Owner badge is showing — that's what Petora checks against your account.",
   },
   {
     title: "Take one clear screenshot",
-    body: "Capture the whole board in a single shot, with your username visible at the top. This is the image you'll upload. Here's what a good submission looks like:",
+    body: "Capture your whole Adopt Me profile in a single shot, with your username visible at the top. This is the image you'll upload. Here's what a good submission looks like next to one that won't work:",
     media: true,
   },
   {
@@ -55,8 +55,8 @@ export default function HowToUsePage() {
         <span className="petora-gradient">Petora leaderboard</span>
       </h1>
       <p style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.6, maxWidth: 560 }}>
-        It takes about two minutes. Verify once, scan your board, and your net worth
-        and rank go live.
+        It takes about two minutes. Verify once, scan your Adopt Me profile, and your net
+        worth and rank go live.
       </p>
 
       <ol style={{ listStyle: "none", margin: "40px 0 0", padding: 0, display: "grid", gap: 14 }}>
@@ -86,7 +86,7 @@ export default function HowToUsePage() {
               {i + 1}
             </span>
 
-            <div style={{ minWidth: 0 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
               <h2
                 style={{
                   fontFamily: "var(--font-display)",
@@ -103,58 +103,145 @@ export default function HowToUsePage() {
 
               {step.media && (
                 /* ───────────────────────────────────────────────────────────
-                   YOUR EXAMPLE SCREENSHOT GOES HERE.
-                   1. Drop your image into the /public folder, e.g.
-                      public/how-to-example.png
-                   2. Delete the <div className="petora-img-placeholder"> below
-                      and uncomment the <Image /> block.
+                   TWO EXAMPLE SCREENSHOTS GO HERE — a good one and a bad one.
+                   1. Drop your images into the /public folder, e.g.
+                        public/how-to-example.png       (the GOOD submission)
+                        public/how-to-bad-example.png   (the BAD submission)
+                   2. In each card below, delete the
+                      <div className="petora-img-placeholder"> block and
+                      uncomment the matching <Image /> block.
+                   (Add `import Image from "next/image";` to the top of the file.)
                    ─────────────────────────────────────────────────────────── */
-                <figure style={{ margin: "16px 0 4px" }}>
-                  <div
-                    className="petora-img-placeholder"
-                    style={{
-                      aspectRatio: "16 / 10",
-                      borderRadius: 12,
-                      border: "1.5px dashed var(--line-2)",
-                      background: "rgba(168,139,250,.05)",
-                      display: "grid",
-                      placeItems: "center",
-                      textAlign: "center",
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          fontFamily: "var(--font-display)",
-                          fontWeight: 600,
-                          color: "var(--lilac)",
-                          fontSize: 15,
-                        }}
-                      >
-                        Example screenshot
-                      </div>
-                      <div style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 4 }}>
-                        You'll add this — a correct board submission
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+                    gap: 14,
+                    margin: "16px 0 4px",
+                  }}
+                >
+                  {/* ── GOOD example ───────────────────────────────────────── */}
+                  <figure style={{ margin: 0 }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        fontFamily: "var(--font-display)",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        color: "var(--up)",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span aria-hidden="true">✓</span> Good
+                    </span>
+
+                    <div
+                      className="petora-img-placeholder"
+                      style={{
+                        aspectRatio: "16 / 10",
+                        borderRadius: 12,
+                        border: "1.5px dashed var(--up)",
+                        background: "rgba(74,222,128,.05)",
+                        display: "grid",
+                        placeItems: "center",
+                        textAlign: "center",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontFamily: "var(--font-display)",
+                            fontWeight: 600,
+                            color: "var(--up)",
+                            fontSize: 14,
+                          }}
+                        >
+                          Good submission
+                        </div>
+                        <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 4 }}>
+                          You'll add this — public/how-to-example.png
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/*
-                  import Image from "next/image";  // add to the top of the file
+                    {/*
+                    <Image
+                      src="/how-to-example.png"
+                      alt="A correct Petora submission: the full Adopt Me profile in one shot with the username visible at the top"
+                      width={1280}
+                      height={800}
+                      style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid var(--line)" }}
+                    />
+                    */}
 
-                  <Image
-                    src="/how-to-example.png"
-                    alt="A correct Petora submission: the full pet board in one shot with the username visible at the top"
-                    width={1280}
-                    height={800}
-                    style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid var(--line)" }}
-                  />
-                  */}
+                    <figcaption style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>
+                      Your whole Adopt Me profile in one shot, username at the top, nothing cropped.
+                    </figcaption>
+                  </figure>
 
-                  <figcaption style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 8 }}>
-                    The whole board in one shot, username at the top, nothing cropped.
-                  </figcaption>
-                </figure>
+                  {/* ── BAD example ────────────────────────────────────────── */}
+                  <figure style={{ margin: 0 }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        fontFamily: "var(--font-display)",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        color: "var(--down, #fb7185)",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span aria-hidden="true">✕</span> Won't work
+                    </span>
+
+                    <div
+                      className="petora-img-placeholder"
+                      style={{
+                        aspectRatio: "16 / 10",
+                        borderRadius: 12,
+                        border: "1.5px dashed var(--down, #fb7185)",
+                        background: "rgba(251,113,133,.05)",
+                        display: "grid",
+                        placeItems: "center",
+                        textAlign: "center",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontFamily: "var(--font-display)",
+                            fontWeight: 600,
+                            color: "var(--down, #fb7185)",
+                            fontSize: 14,
+                          }}
+                        >
+                          Bad submission
+                        </div>
+                        <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 4 }}>
+                          You'll add this — public/how-to-bad-example.png
+                        </div>
+                      </div>
+                    </div>
+
+                    {/*
+                    <Image
+                      src="/how-to-bad-example.png"
+                      alt="A submission Petora can't read: the Adopt Me profile is cropped, blurry, or covered by a menu, and the username isn't visible"
+                      width={1280}
+                      height={800}
+                      style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid var(--line)" }}
+                    />
+                    */}
+
+                    <figcaption style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>
+                      Cropped, blurry, or covered by a menu, with the username cut off — Petora may misread or reject it.
+                    </figcaption>
+                  </figure>
+                </div>
               )}
             </div>
           </li>
@@ -177,7 +264,7 @@ export default function HowToUsePage() {
         </h2>
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 9 }}>
           {[
-            "The full board fits in frame — nothing cut off at the edges.",
+            "Your full Adopt Me profile fits in frame — nothing cut off at the edges.",
             "Your username is readable at the top.",
             "No menus, chat, or pop-ups covering any pets.",
             "Bright enough that every pet is easy to see.",

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Socials from "@/components/socials";
 
 const NAV_LINKS = [
   { href: "/catalog", label: "Catalog" },
@@ -6,6 +7,7 @@ const NAV_LINKS = [
   { href: "/scan", label: "Scan" },
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/how-to-use", label: "How to use" },
+  { href: "/trade-feedback", label: "Trade Feedback" },
 ];
 
 const LEGAL_LINKS = [
@@ -38,6 +40,11 @@ export default function Footer() {
             <p className="max-w-xs text-[12px] leading-relaxed text-[color:var(--muted)]">
               Track, verify, and showcase your Adopt Me pet portfolio.
             </p>
+            {/* Socials render here once you fill in links in components/socials.tsx.
+                Until then this row is empty (the component hides itself). */}
+            <div className="mt-1.5">
+              <Socials />
+            </div>
           </div>
 
           <nav className="flex flex-col gap-2.5">
