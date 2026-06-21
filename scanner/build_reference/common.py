@@ -182,18 +182,33 @@ def _levenshtein(a, b):
 # ======================================================================
 # Segmentation  (box-aware + verified-gated, now color-agnostic)
 # ======================================================================
-def find_cells(a, color=None, tol=None):
-    """Find pet cell regions — everything that is NOT the background color."""
-    mask = bg_mask(a, color, tol)
+def find_cells(a, color=None, tol=None, mask=None):
+    """Find pet cell regions — everything that is NOT the background color.
+
+    Perf: instead of np.where(lbl == i) per component (an O(components * pixels)
+    full-array scan each time), we get every component's area via np.bincount and
+    every component's bbox via ndimage.find_objects in a single pass each, then
+    gate on area cheaply before doing any per-component work. Output is identical.
+    """
+    if mask is None:
+        mask = bg_mask(a, color, tol)
     lbl, n = ndimage.label(~mask)
+    if n == 0:
+        return []
+    areas = np.bincount(lbl.ravel())
+    slices = ndimage.find_objects(lbl)
     banner_cut = a.shape[0] * CELL_BANNER_FRAC
     cand = []
     for i in range(1, n + 1):
-        ys, xs = np.where(lbl == i)
-        if len(xs) < MIN_AREA:
+        if areas[i] < MIN_AREA:
             continue
-        x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
-        w, h = int(x1 - x0 + 1), int(y1 - y0 + 1)
+        sl = slices[i - 1]
+        if sl is None:
+            continue
+        ysl, xsl = sl
+        x0, y0 = int(xsl.start), int(ysl.start)
+        x1, y1 = int(xsl.stop - 1), int(ysl.stop - 1)
+        w, h = x1 - x0 + 1, y1 - y0 + 1
         # Reject UI chrome in the top banner (username / avatar / buttons live
         # here — never pets). A component sitting fully inside the banner band
         # is skipped before the shape checks.
@@ -202,22 +217,32 @@ def find_cells(a, color=None, tol=None):
         comp = ndimage.binary_fill_holes(lbl[y0:y1 + 1, x0:x1 + 1] == i)
         fill = int(comp.sum()) / (w * h)
         if ASPECT_LO < w / h < ASPECT_HI and fill >= MIN_FILL:
-            cand.append((int(x0), int(y0), w, h))
+            cand.append((x0, y0, w, h))
     return cand
 
 
-def find_boxes(a, color=None, tol=None):
+def find_boxes(a, color=None, tol=None, mask=None):
     """Find the colored box regions (background-colored areas large enough to be a box)."""
-    mask = bg_mask(a, color, tol)
+    if mask is None:
+        mask = bg_mask(a, color, tol)
     lbl, n = ndimage.label(mask)
+    if n == 0:
+        return []
     H, W = a.shape[0], a.shape[1]
+    floor = BOX_MIN_FRAC * H * W
+    areas = np.bincount(lbl.ravel())
+    slices = ndimage.find_objects(lbl)
     out = []
     for i in range(1, n + 1):
-        ys, xs = np.where(lbl == i)
-        if len(xs) < BOX_MIN_FRAC * H * W:
+        if areas[i] < floor:
             continue
-        x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
-        out.append((int(x0), int(y0), int(x1 - x0 + 1), int(y1 - y0 + 1)))
+        sl = slices[i - 1]
+        if sl is None:
+            continue
+        ysl, xsl = sl
+        x0, y0 = int(xsl.start), int(ysl.start)
+        x1, y1 = int(xsl.stop - 1), int(ysl.stop - 1)
+        out.append((x0, y0, int(x1 - x0 + 1), int(y1 - y0 + 1)))
     return out
 
 
@@ -230,16 +255,24 @@ def find_verified_badges(a):
     green = ((G > 110) & (G < 210) & (G - R > 35) & (G - B > 35)
              & (R < 160) & (B < 160))
     lbl, n = ndimage.label(green)
+    if n == 0:
+        return []
     lo = BADGE_AREA_LO_FRAC * image_area
     hi = BADGE_AREA_HI_FRAC * image_area
+    areas = np.bincount(lbl.ravel())
+    slices = ndimage.find_objects(lbl)
 
     out = []
     for i in range(1, n + 1):
-        ys, xs = np.where(lbl == i)
-        area = len(xs)
+        area = int(areas[i])
         if not (lo < area < hi):
             continue
-        x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
+        sl = slices[i - 1]
+        if sl is None:
+            continue
+        ysl, xsl = sl
+        x0, y0 = int(xsl.start), int(ysl.start)
+        x1, y1 = int(xsl.stop - 1), int(ysl.stop - 1)
         w, h = x1 - x0 + 1, y1 - y0 + 1
         if (BADGE_ASPECT_LO < w / h < BADGE_ASPECT_HI and
                 BADGE_FILL_LO < area / (w * h) < BADGE_FILL_HI):
@@ -272,10 +305,12 @@ def segment_board(im):
     Now auto-detects background color so any of the 7 Adopt Me colors work.
     """
     a = _arr(im)
-    # Detect once, pass to all three finders so we don't re-detect 3x
+    # Detect once, build the bg mask once, reuse for cells + boxes
+    # (find_cells/find_boxes accept a precomputed mask to avoid recomputing it).
     bg_name, color, tol = detect_bg_color(a)
-    cells = find_cells(a, color, tol)
-    boxes = find_boxes(a, color, tol)
+    mask = bg_mask(a, color, tol)
+    cells = find_cells(a, mask=mask)
+    boxes = find_boxes(a, mask=mask)
     badges = find_verified_badges(a)
 
     groups = {i: [] for i in range(len(boxes))}
@@ -342,11 +377,21 @@ def detect_badges(crop):
     for k, m in masks.items():
         amin = amin_mega if k == "mega" else amin_round
         lbl2, c = ndimage.label(m)
+        if c == 0:
+            continue
+        areas = np.bincount(lbl2.ravel())
+        slices = ndimage.find_objects(lbl2)
         for j in range(1, c + 1):
-            ys, xs = np.where(lbl2 == j)
-            area = len(xs)
-            bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
-            if amin < area < amax and 0.5 < bw / bh < 2.0 and area / (bw * bh) > 0.45:
+            area = int(areas[j])
+            if not (amin < area < amax):
+                continue
+            sl = slices[j - 1]
+            if sl is None:
+                continue
+            ysl, xsl = sl
+            bw = xsl.stop - xsl.start
+            bh = ysl.stop - ysl.start
+            if 0.5 < bw / bh < 2.0 and area / (bw * bh) > 0.45:
                 res[k] = True
                 break
     return res

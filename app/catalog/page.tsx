@@ -86,7 +86,7 @@ export default function Catalog() {
 
   // load movers (rising / falling)
   useEffect(() => {
-    supabase.rpc("get_movers", { window_hours: 24 }).then(({ data, error }) => {
+    supabase.rpc("get_movers", { window_hours: 168 }).then(({ data, error }) => {
       if (error) { console.error(error); return; }
       setMovers((data ?? []).map((r: any) => ({
         pet_id: r.pet_id, name: r.name, icon_url: r.icon_url,
@@ -179,7 +179,7 @@ export default function Catalog() {
 
   function MoverList({ list, up }: { list: Mover[]; up: boolean }) {
     if (list.length === 0) {
-      return <p className="text-[color:var(--muted)]">No {up ? "rising" : "falling"} pets in the last 24h yet. This fills in as more history is collected.</p>;
+      return <p className="text-[color:var(--muted)]">No {up ? "rising" : "falling"} pets in the last 7 days yet. This fills in as more history is collected.</p>;
     }
     return (
       <div className="petora-card overflow-hidden">

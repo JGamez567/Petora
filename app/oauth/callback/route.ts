@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";   // ← add
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
@@ -22,8 +22,25 @@ export async function GET(req: NextRequest) {
   const savedState = jar.get("rbx_state")?.value;
   const verifier = jar.get("rbx_verifier")?.value;
 
-  const back = (status: string) =>
-    NextResponse.redirect(new URL(`/settings?roblox=${status}`, req.url));
+  // Any cookies @supabase/ssr wants to write during getUser() — most importantly a
+  // ROTATED refresh token — are collected here so they can be attached to the redirect
+  // we actually return.
+  //
+  // This is the fix for the "logged out after verifying / have to verify twice" bug:
+  // previously setAll wrote to the next/headers jar, and those writes never rode out on
+  // the manually-built NextResponse.redirect(). When getUser() happened to refresh the
+  // session, the rotated token was dropped, the browser kept the old (now-invalidated)
+  // refresh token, and the user got logged out. Whether a refresh fired on a given
+  // attempt is timing-dependent — hence "fails the first time, works the second."
+  const pendingCookies: { name: string; value: string; options: any }[] = [];
+
+  // Build a redirect that ALWAYS carries any pending auth cookies.
+  const redirectTo = (path: string) => {
+    const res = NextResponse.redirect(new URL(path, req.url));
+    for (const c of pendingCookies) res.cookies.set(c.name, c.value, c.options);
+    return res;
+  };
+  const back = (status: string) => redirectTo(`/settings?roblox=${status}`);
 
   if (!code || !state || !savedState || state !== savedState || !verifier) {
     return back("error");
@@ -59,6 +76,8 @@ export async function GET(req: NextRequest) {
   const robloxUsername = (claims.preferred_username ?? claims.name) as string;
 
   // Session client — used ONLY to identify the signed-in user (trusted via getUser).
+  // Reads come from the request jar; writes (token rotation) are captured into
+  // pendingCookies and applied to the redirect response, NOT silently dropped.
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -66,14 +85,16 @@ export async function GET(req: NextRequest) {
       cookies: {
         getAll: () => jar.getAll(),
         setAll: (toSet) =>
-          toSet.forEach(({ name, value, options }) => jar.set(name, value, options)),
+          toSet.forEach(({ name, value, options }) =>
+            pendingCookies.push({ name, value, options }),
+          ),
       },
     },
   );
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return NextResponse.redirect(new URL("/login", req.url));
+  if (!user) return redirectTo("/login");
 
   // Service-role client — the protected-column write must run as service_role
   // so the profiles_protect trigger lets it through.
@@ -95,8 +116,11 @@ export async function GET(req: NextRequest) {
   if (error?.code === "23505") return back("taken"); // unique index still fires under service role
   if (error) return back("error");
 
-  jar.delete("rbx_state");
-  jar.delete("rbx_verifier");
-  jar.delete("rbx_nonce");
-  return back("ok");
+  // Clear the one-time PKCE/state cookies on the response we actually return
+  // (jar.delete had the same "never sent" problem as the auth writes above).
+  const res = back("ok");
+  for (const name of ["rbx_state", "rbx_verifier", "rbx_nonce"]) {
+    res.cookies.set(name, "", { maxAge: 0, path: "/" });
+  }
+  return res;
 }

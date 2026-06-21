@@ -121,8 +121,12 @@ def health():
 @app.post("/scan")
 def scan(files: list[UploadFile] = File(...),
          mode: str = Form("personal")):
+    t = {}
+    _t = time.perf_counter()
+
     images = _read_images(files)
     library = _library()
+    t["decode_load"] = time.perf_counter() - _t; _t = time.perf_counter()
 
     # 1) Username gate.
     #
@@ -139,27 +143,34 @@ def scan(files: list[UploadFile] = File(...),
         gate = _run_gate(images)
     else:
         gate = None
+    t["gate_ocr"] = time.perf_counter() - _t; _t = time.perf_counter()
 
     # 2) Recognize every page (segment + match + badges; unverified boxes skipped).
     pages = [cm.recognize_board(img, library) for img in images]
+    t["recognize"] = time.perf_counter() - _t; _t = time.perf_counter()
+
     skipped = [{"page": pi, "box_id": b["box_id"], "pets": b["cell_count"]}
                for pi, page in enumerate(pages) for b in page["boxes"]
                if not b["verified"]]
 
     # 3) Dedup across boxes/pages (one box per variant).
     agg = cm.aggregate(cm.boards_from_pages(pages), on_conflict="ask")
+    t["aggregate"] = time.perf_counter() - _t; _t = time.perf_counter()
     if agg["status"] != "ok":
         return {"status": "needs_consolidation", "mode": mode, "gate": gate,
-                "skipped_boxes": skipped, **agg}
+                "skipped_boxes": skipped,
+                "timings": {k: round(v, 3) for k, v in t.items()}, **agg}
 
     # 4) Value the consolidated list (value * count).
     variant_map, value_map = _value_maps()
     rows, totals, missing = cm.value_portfolio(agg["items"], variant_map, value_map)
+    t["value"] = time.perf_counter() - _t
 
     return {"status": "ok", "mode": mode, "gate": gate,
             "pages": len(images), "skipped_boxes": skipped,
             "items": rows, "totals": totals, "missing": missing,
-            "warnings": agg.get("warnings")}
+            "warnings": agg.get("warnings"),
+            "timings": {k: round(v, 3) for k, v in t.items()}}
 
 
 if __name__ == "__main__":

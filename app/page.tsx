@@ -84,7 +84,7 @@ export default function Home() {
             Watch your <span className="petora-gradient">net worth</span> climb.
           </h1>
           <p className="mt-5 max-w-md text-[16px] leading-relaxed text-[color:var(--muted)]">
-            Petora scans your board, values every pet from live market data, and ranks you
+            Petora scans your Adopt Me profile, values every pet from live market data, and ranks you
             against verified traders. One screenshot and you're on the board.
           </p>
           <div className="mt-8 min-h-[52px]">
