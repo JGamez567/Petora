@@ -19,6 +19,16 @@ FIX (scanner v3 - multi-color support):
 FIX (scanner v2 - badge + OCR):
   - find_verified_badges() now scales thresholds with H*W (total image area).
   - read_username() returns a list of candidates across multiple PSM modes.
+
+PERF (scanner v4 - OCR gate upscale cap):
+  - _username_ocr_variants() previously upscaled the header band 2x even when it
+    was already high-res (phone screenshots), making each of the 6 Tesseract
+    passes run over a ~2MP image. It now scales the band TOWARD a Tesseract-
+    friendly target and caps the long side (_OCR_MAX_DIM), so phone-res bands run
+    at native scale and oversized bands are shrunk. Same two preprocessings, same
+    three PSM modes, same candidate net (the band stays well above Tesseract's
+    legibility floor) -- just ~4x fewer pixels per pass. This is the main lever
+    behind the gate_ocr stage dropping from ~22s to single digits.
 """
 
 import os
@@ -620,25 +630,31 @@ def _header_band(a):
             break
     return int(y0), int(y1)
 
-# ==========================================================================
-# PASTE INTO common.py — replaces ONLY your existing read_username() function.
-#
-# Steps:
-#   1. Make sure these imports exist at the top of common.py (add any missing):
-#          import re
-#          import numpy as np
-#          from PIL import Image, ImageOps
-#          import pytesseract            # (you already use this for OCR)
-#   2. DELETE your current `def read_username(...):` function.
-#   3. Paste everything below in its place.
-#
-# Helper names are prefixed `_username_` so they will NOT collide with your
-# existing _header_band() / bg_mask() / detect_bg_color(), etc.
-# ==========================================================================
 
 _USERNAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
 _USERNAME_PSM_MODES = (7, 8, 6)
 _USERNAME_HEADER_FRAC = 0.18  # top slice of the board holding the banner; tune if needed
+
+# OCR upscale sizing (perf v4). Tesseract reads best when the text is a few hundred
+# px tall, but blindly multiplying an already-high-res phone band just multiplies
+# OCR cost (~O(pixels) per pass) with no accuracy gain. So aim the band's LONG side
+# at _OCR_TARGET_DIM, never exceed _OCR_MAX_DIM (the cost cap), and never upscale a
+# tiny crop by more than _OCR_MAX_UPSCALE. Phone-res bands end up at native scale;
+# oversized bands get shrunk; only genuinely small desktop crops get blown up.
+_OCR_TARGET_DIM = 1000
+_OCR_MAX_DIM = 1200
+_OCR_MAX_UPSCALE = 3.0
+
+
+def _ocr_scale(longest):
+    """Resize factor for the OCR band, given its current long side in px."""
+    if longest <= 0:
+        return 1.0
+    if longest > _OCR_MAX_DIM:
+        return _OCR_MAX_DIM / longest                 # oversized -> shrink to cap
+    if longest >= _OCR_TARGET_DIM:
+        return 1.0                                    # already in the sweet spot
+    return min(_OCR_MAX_UPSCALE, _OCR_TARGET_DIM / longest)  # small -> upscale toward target
 
 
 def _username_band(im):
@@ -651,7 +667,12 @@ def _username_band(im):
 def _username_ocr_variants(band):
     """Two preprocessings for OCR:
     (1) isolate light banner text -> black-on-white (Tesseract's preferred input),
-    (2) plain autocontrast grayscale as a fallback for dark text."""
+    (2) plain autocontrast grayscale as a fallback for dark text.
+
+    Each is resized via _ocr_scale(): the band's long side is aimed at a
+    Tesseract-friendly target and capped at _OCR_MAX_DIM. This cap is the gate's
+    main cost lever — high-res phone bands stay at native scale instead of being
+    doubled into a multi-megapixel image six times over."""
     a = np.asarray(band).astype(np.int16)
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     brightness = (r + g + b) / 3.0
@@ -664,8 +685,13 @@ def _username_ocr_variants(band):
     out = []
     for arr in (v1, v2):
         img = Image.fromarray(arr, mode="L")
-        scale = 3 if max(img.size) < 600 else 2           # small headers OCR poorly
-        out.append(img.resize((img.width * scale, img.height * scale), Image.LANCZOS))
+        scale = _ocr_scale(max(img.size))
+        if scale != 1.0:
+            img = img.resize(
+                (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+                Image.LANCZOS,
+            )
+        out.append(img)
     return out
 
 
@@ -703,6 +729,7 @@ def read_username(im, debug_dir=None):
                 if 3 <= len(cand) <= 20:                  # Roblox username length bounds
                     seen.setdefault(cand, None)
     return list(seen.keys())
+
 
 def match_username(detected_list, account):
     if not detected_list:
