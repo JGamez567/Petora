@@ -39,6 +39,16 @@ function variantLabel(neon: string, fly: boolean, ride: boolean): string {
   return parts.length ? parts.join(" ") : "Normal";
 }
 
+const MAX_QTY = 500; // hard cap on how many of one pet a single portfolio entry can hold
+
+// Parse the (string) qty field into a clean integer in [1, MAX_QTY].
+// Empty / non-numeric / <1 all fall back to 1; anything over the cap is clamped.
+function clampQty(raw: string | number): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_QTY, n);
+}
+
 export default function Portfolio() {
   const [userId, setUserId] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -49,7 +59,7 @@ export default function Portfolio() {
   const [picked, setPicked] = useState<PetLite | null>(null);
   const [tier, setTier] = useState<string>("normal");
   const [potion, setPotion] = useState<(typeof POTIONS)[number]>(POTIONS[0]);
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState<string>("1"); // string: lets mobile clear the field mid-edit without snapping back to 1
   const [items, setItems] = useState<Item[]>([]);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -75,7 +85,7 @@ export default function Portfolio() {
       .then(({ data }) => setPets(data ?? []));
   }, []);
 
-  // load this user's saved portfolio
+  // load this user's saved portfolio (all personal rows — manual + scan)
   useEffect(() => {
     if (!userId) return;
     async function loadItems() {
@@ -150,18 +160,42 @@ export default function Portfolio() {
     const unitValue = vVal?.[0]?.value != null ? Number(vVal[0].value) : null;
     if (unitValue == null) { setAddError(`No value recorded yet for that variant.`); setAdding(false); return; }
 
-    const { data: inserted, error } = await supabase
-      .from("portfolio_items")
-      .insert({ user_id: userId, pet_variant_id: variantId, quantity })
-      .select("id")
-      .single();
-    if (error) { setAddError(error.message); setAdding(false); return; }
+    const qty = clampQty(quantity);
 
-    setItems((prev) => [...prev, {
-      rowId: inserted.id, petId: pet.id, name: pet.name, icon_url: pet.icon_url,
-      variantLabel: label, unitValue, quantity,
-    }]);
-    setPicked(null); setSearch(""); setTier("normal"); setPotion(POTIONS[0]); setQuantity(1); setAdding(false);
+    // Upsert-increment via RPC. Inserts a new MANUAL row, or — if this variant is
+    // already held manually — adds to the existing row's quantity (capped at 500).
+    // The function runs SECURITY DEFINER scoped to auth.uid(): it needs no UPDATE
+    // RLS policy and can never touch another user's rows (user_id is server-side).
+    // It only conflicts against source='manual' rows, so a scanned copy of the same
+    // variant is left untouched (a re-scan must be free to replace its own rows).
+    // Returns the resulting row { id, quantity }.
+    const { data: rpcRows, error } = await supabase
+      .rpc("add_manual_pet", { p_variant_id: variantId, p_qty: qty });
+
+    if (error || !rpcRows || (rpcRows as any[]).length === 0) {
+      setAddError(error?.message ?? "Couldn't add that pet. Please try again.");
+      setAdding(false);
+      return;
+    }
+
+    const { id: rowId, quantity: newQty } = (rpcRows as any[])[0] as { id: number; quantity: number };
+
+    setItems((prev) => {
+      const idx = prev.findIndex((x) => x.rowId === rowId);
+      if (idx >= 0) {
+        // existing manual row was incremented — reflect the new total in place
+        const next = [...prev];
+        next[idx] = { ...next[idx], quantity: newQty };
+        return next;
+      }
+      // brand-new manual row
+      return [...prev, {
+        rowId, petId: pet.id, name: pet.name, icon_url: pet.icon_url,
+        variantLabel: label, unitValue, quantity: newQty,
+      }];
+    });
+
+    setPicked(null); setSearch(""); setTier("normal"); setPotion(POTIONS[0]); setQuantity("1"); setAdding(false);
   }
 
   async function removeItem(rowId: number) {
@@ -243,12 +277,40 @@ export default function Portfolio() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <label className="text-sm text-[color:var(--muted)]">
-                Qty:
-                <input type="number" min={1} value={quantity}
-                  onChange={(e) => setQuantity(Math.max(1, Number(e.target.value)))}
-                  className="ml-2 w-20 rounded-md border border-[color:var(--line)] bg-[color:var(--surface)] px-2.5 py-1.5 text-[color:var(--text)] outline-none focus:border-[color:var(--violet)]" />
-              </label>
+              <div className="flex items-center gap-2 text-sm text-[color:var(--muted)]">
+                <span>Qty:</span>
+                <div className="inline-flex items-center overflow-hidden rounded-md border border-[color:var(--line)] bg-[color:var(--surface)]">
+                  <button
+                    type="button"
+                    aria-label="Decrease quantity"
+                    onClick={() => setQuantity(String(Math.max(1, clampQty(quantity) - 1)))}
+                    disabled={clampQty(quantity) <= 1}
+                    className="px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.10)] disabled:opacity-40">
+                    −
+                  </button>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={quantity}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      // allow an empty field while typing; accept digits only — never snap back to 1 mid-edit
+                      if (v === "" || /^\d+$/.test(v)) setQuantity(v);
+                    }}
+                    onBlur={() => setQuantity(String(clampQty(quantity)))}
+                    className="w-14 border-x border-[color:var(--line)] bg-transparent px-1 py-1.5 text-center text-[color:var(--text)] outline-none focus:bg-[rgba(168,139,250,0.06)]" />
+                  <button
+                    type="button"
+                    aria-label="Increase quantity"
+                    onClick={() => setQuantity(String(Math.min(MAX_QTY, clampQty(quantity) + 1)))}
+                    disabled={clampQty(quantity) >= MAX_QTY}
+                    className="px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.10)] disabled:opacity-40">
+                    +
+                  </button>
+                </div>
+                <span className="text-[11px] text-[color:var(--muted)]">max {MAX_QTY}</span>
+              </div>
               <button onClick={addToPortfolio} disabled={adding}
                 className="rounded-lg px-5 py-2 text-sm font-semibold text-[#1a1030] transition hover:brightness-110 disabled:opacity-40 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
                 {adding ? "Adding…" : `Add ${picked.name}`}

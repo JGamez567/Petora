@@ -695,11 +695,60 @@ def _username_ocr_variants(band):
     return out
 
 
-def read_username(im, debug_dir=None):
+def _windowed_distance(candidate, expected):
+    """Min edit distance between `expected` and any equal-length window of
+    `candidate`. Mirrors windowedDistance() in app/api/scan/route.ts so the
+    scanner's early-exit predicate is byte-for-byte the same as the authoritative
+    gate. Junk glued to the front/back of the real name falls outside the window."""
+    c = candidate.lower()
+    e = expected.lower()
+    if len(c) < len(e):
+        return _levenshtein(c, e)
+    best = None
+    for i in range(0, len(c) - len(e) + 1):
+        d = _levenshtein(c[i:i + len(e)], e)
+        if best is None or d < best:
+            best = d
+        if best == 0:
+            break
+    return best if best is not None else _levenshtein(c, e)
+
+
+_GATE_WINDOW_COVERAGE = 0.7  # must match WINDOW_COVERAGE in route.ts
+
+
+def gate_match(candidate, expected):
+    """True iff `candidate` would be ACCEPTED as `expected` by the authoritative
+    gate in route.ts. Ported verbatim from usernameMatches() (single candidate),
+    so the scanner's early-exit can never stop on a read route.ts would reject —
+    it can only ever save OCR passes, never change the accept/reject decision."""
+    if not candidate or not expected:
+        return False
+    d = candidate.lower()
+    e = expected.lower()
+    # 1) direct tolerant match — clean reads / a single OCR slip
+    if _levenshtein(d, e) <= 1:
+        return True
+    # 2) windowed match — tolerate junk on the front/back, but only when the
+    #    expected name makes up most of the token (so a short name can't match as a
+    #    substring of an unrelated, longer username).
+    if len(d) >= len(e) and len(e) >= _GATE_WINDOW_COVERAGE * len(d):
+        return _windowed_distance(d, e) <= 1
+    return False
+
+
+def read_username(im, expected=None, debug_dir=None):
     """Return deduped candidate usernames from the header banner.
 
-    Pools results across 2 preprocessings x 3 PSM modes. match_username() accepts
-    the best within Levenshtein 1, so a wide net is safe — junk won't match.
+    Pools results across 2 preprocessings x 3 PSM modes, best-combo first.
+
+    EARLY-EXIT (perf): when `expected` (the signed-in user's roblox_username) is
+    supplied, OCR stops the instant a candidate matches it under gate_match() — the
+    SAME predicate route.ts uses — so a clean read returns after one pass instead
+    of grinding through all six. If `expected` is None/empty, or nothing matches,
+    every pass runs and the full candidate list comes back, exactly as before.
+    route.ts remains the authoritative gate either way, so this only saves passes
+    and can never flip a verify into a reject.
 
     Pass debug_dir to dump the preprocessed images Tesseract actually sees.
     """
@@ -707,7 +756,7 @@ def read_username(im, debug_dir=None):
         raise RuntimeError("pytesseract not installed")
 
     band = _username_band(im)
-    variants = _username_ocr_variants(band)
+    variants = _username_ocr_variants(band)  # [light-text, autocontrast]
 
     if debug_dir:
         import os
@@ -717,6 +766,8 @@ def read_username(im, debug_dir=None):
             v.save(os.path.join(debug_dir, f"header_ocr_{i}.png"))
 
     seen = {}
+    # Tuned light-text preprocessing first, single-line PSM first, so the
+    # early-exit fires on the earliest pass in the common case.
     for variant in variants:
         for psm in _USERNAME_PSM_MODES:
             cfg = f"--psm {psm} -c tessedit_char_whitelist={_USERNAME_CHARS}"
@@ -728,6 +779,8 @@ def read_username(im, debug_dir=None):
                 cand = re.sub(r"[^A-Za-z0-9_]", "", line).strip()
                 if 3 <= len(cand) <= 20:                  # Roblox username length bounds
                     seen.setdefault(cand, None)
+            if expected and any(gate_match(c, expected) for c in seen):
+                return list(seen.keys())                  # acceptable read found — stop early
     return list(seen.keys())
 
 

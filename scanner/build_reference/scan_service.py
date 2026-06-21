@@ -4,7 +4,10 @@ scan_service.py  --  one HTTP endpoint that runs the whole scanner in-process.
     POST /scan   (multipart/form-data)
       files    : 1..7 board screenshots (one per in-game page)
       mode     : "personal" | "personal_gated" | "leaderboard"   (default "personal")
-      account  : required when mode == "leaderboard" (the user's Roblox username)
+      account  : the signed-in user's Roblox username. Optional, but when present it
+                 lets the OCR gate EARLY-EXIT the moment it reads a matching name
+                 (instead of running all 6 Tesseract passes). route.ts sends it for
+                 both "leaderboard" and "personal_gated".
 
 FIX (v2):
   - Added "personal_gated" mode. Behaves like "personal" but also runs the OCR
@@ -16,6 +19,14 @@ FIX (v2):
     that don't pass a mode aren't broken.
   - Gate now flattens candidates: read_username() returns a list per image, so
     we flatten to a single deduplicated list across all pages.
+
+PERF (v4 - OCR gate early-exit):
+  - _run_gate() now threads `account` into read_username(expected=...). With an
+    expected name, OCR stops at the first pass that yields a candidate the gate
+    would accept (gate_match, the same predicate route.ts uses), and we also stop
+    scanning further PAGES once any accepted candidate is in hand. With no account
+    (old callers), behaviour is identical to before: all passes, all candidates.
+    route.ts stays the authoritative gate, so this only ever removes OCR work.
 
 It calls common.py:  read_username (gate) -> recognize_board (segment+match+badge)
 -> aggregate (one-box-per-variant dedup) -> value_portfolio (value * count).
@@ -91,22 +102,34 @@ def _read_images(files):
     return images
 
 
-def _run_gate(images):
+def _run_gate(images, expected=""):
     """
     Run OCR username detection across all uploaded pages.
-    read_username() now returns a list of candidates per image (multiple PSM
-    modes). We flatten and deduplicate across all pages so route.ts gets one
-    clean list to check against the verified profile username.
-    Returns None if pytesseract isn't available (non-blocking).
+
+    read_username() returns a list of candidates per image. We flatten and
+    deduplicate across pages so route.ts gets one clean list to check against the
+    verified profile username.
+
+    When `expected` is given, read_username() early-exits at the first accepted
+    read per image, and we also stop scanning further pages once any accepted
+    candidate is in hand — the username is the same on every page, so one accepted
+    read is all the gate needs. With no `expected`, every pass runs (old behaviour).
+
+    Returns None-safe dict {"detected": [...]}; on missing pytesseract returns
+    {"detected": []} so route.ts soft-allows.
     """
+    expected = (expected or "").strip()
     try:
         seen = set()
         candidates = []
         for img in images:
-            for name in cm.read_username(img):
+            for name in cm.read_username(img, expected=expected or None):
                 if name and name not in seen:
                     seen.add(name)
                     candidates.append(name)
+            # Cross-page early-exit: an accepted read on any page is enough.
+            if expected and any(cm.gate_match(c, expected) for c in candidates):
+                break
         return {"detected": candidates}
     except RuntimeError:
         # pytesseract not installed — gate unavailable, route.ts soft-allows
@@ -120,7 +143,8 @@ def health():
 
 @app.post("/scan")
 def scan(files: list[UploadFile] = File(...),
-         mode: str = Form("personal")):
+         mode: str = Form("personal"),
+         account: str = Form("")):
     t = {}
     _t = time.perf_counter()
 
@@ -135,12 +159,12 @@ def scan(files: list[UploadFile] = File(...),
     #                     username IS detected but doesn't match the signed-in user.
     #    personal:        skip (legacy behaviour — no gate, gate=None in response).
     #
-    #    NOTE: /scan has no auth context so it can't enforce the match itself.
-    #    It just does the OCR and returns the candidates. The real enforcement
-    #    (OCR'd name vs OAuth-verified roblox_username in profiles) happens in
-    #    route.ts which knows who is signed in.
+    #    `account` (the signed-in user's roblox_username) is optional: when present
+    #    it only lets the gate stop OCR early on a matching read. The real
+    #    enforcement (OCR'd name vs OAuth-verified roblox_username in profiles) still
+    #    happens in route.ts, which knows who is signed in. /scan has no auth context.
     if mode in ("leaderboard", "personal_gated"):
-        gate = _run_gate(images)
+        gate = _run_gate(images, account)
     else:
         gate = None
     t["gate_ocr"] = time.perf_counter() - _t; _t = time.perf_counter()
