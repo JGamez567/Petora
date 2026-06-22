@@ -25,8 +25,18 @@ interface ScanResult {
   conflicts?: { name: string; variant: string }[];
   duplicate_boards?: string[][];
 }
+// Mirrors route.ts's success `submissions` block (the daily SUCCESS_LIMIT budget).
+interface Budget {
+  limit: number;
+  used: number;
+  remaining: number;
+}
 
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+// "2 scans left today" / "1 scan left today" / "No scans left today"
+const budgetLabel = (remaining: number) =>
+  remaining <= 0 ? "No scans left today" : `${remaining} scan${remaining === 1 ? "" : "s"} left today`;
 
 function VariantChips({ item }: { item: Item }) {
   const chips: { label: string; cls: string }[] = [];
@@ -48,14 +58,19 @@ export default function PetScanner() {
   const [leaderboard, setLeaderboard] = useState(false); // the one toggle: opt in/out of the board
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);       // genuine failures (red)
+  const [limitMsg, setLimitMsg] = useState<string | null>(null); // hit a daily cap (amber, not an error)
+  const [budget, setBudget] = useState<Budget | null>(null);     // "N scans left today"
   const [result, setResult] = useState<ScanResult | null>(null);
   const [saved, setSaved] = useState<{ leaderboard: boolean; total: number; pets: number } | null>(null);
   const [flagMsg, setFlagMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // NOTE: budget is intentionally NOT reset here — once the server tells us the
+  // daily quota, we keep showing it across re-uploads / toggle flips until the
+  // next response refreshes it.
   const reset = () => {
-    setResult(null); setError(null); setSaved(null); setFlagMsg(null);
+    setResult(null); setError(null); setLimitMsg(null); setSaved(null); setFlagMsg(null);
   };
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
@@ -79,16 +94,31 @@ export default function PetScanner() {
       if (res.ok && data.status === "ok") {
         setResult({ status: "ok", items: data.items, totals: { total: data.total } });
         setSaved({ leaderboard: data.leaderboard, total: data.total, pets: data.pets });
+        if (data.submissions) setBudget(data.submissions as Budget); // refresh "N scans left today"
       } else if (data.error === "scan_not_ok" && data.scan?.status === "needs_consolidation") {
         // same consolidation UI as before — surface the scanner's findings
         setResult(data.scan as ScanResult);
+      } else if (data.error === "rate_limited") {
+        // Daily SUCCESS cap. route.ts already composes tailored copy (mentions the
+        // limit, hours left, and the premium upsell for free users) — prefer it.
+        setBudget({ limit: data.limit, used: data.used, remaining: 0 });
+        setLimitMsg(
+          data.message ??
+            `You've used all your scans for today. Try again in about ${data.hours_left ?? 24}h.`
+        );
+      } else if (data.error === "too_many_attempts") {
+        // Compute-abuse cap (mostly failed scans). Separate axis from the success
+        // budget, so we don't touch `budget` here — just show the slow-down note.
+        setLimitMsg(
+          data.message ??
+            `Too many scan attempts today. Upload clear screenshots of your pet menu, then try again in about ${data.hours_left ?? 24}h.`
+        );
       } else {
         const map: Record<string, string> = {
           not_signed_in: "Please sign in to scan.",
           profile_not_found: "We couldn't load your profile. Please sign in again.",
           roblox_verification_required:
             "To appear on the leaderboard, verify your Roblox account first on the Verification page. You can still scan privately by turning the leaderboard toggle off.",
-          rate_limited: `You've used your scan for today. Try again in ${data.hours_left ?? 24}h.`,
           username_unreadable:
             "We couldn't read a Roblox username on this Adopt Me profile. Upload a screenshot that clearly shows the username header for the account you verified with — or turn the leaderboard toggle off to save privately.",
           username_mismatch:
@@ -117,9 +147,23 @@ export default function PetScanner() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4">
-      <h1 className="[font-family:var(--font-display)] text-lg font-semibold text-[color:var(--text)]">
-        Scan your pets
-      </h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="[font-family:var(--font-display)] text-lg font-semibold text-[color:var(--text)]">
+          Scan your pets
+        </h1>
+        {budget && (
+          <span
+            className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+              budget.remaining <= 0
+                ? "border-[rgba(245,200,120,0.28)] bg-[rgba(245,200,120,0.08)] text-[#F5C878]"
+                : "border-[color:var(--line-2)] bg-[color:var(--surface-2)] text-[color:var(--muted)]"
+            }`}
+            title={`${budget.used}/${budget.limit} used in the last 24h`}
+          >
+            {budgetLabel(budget.remaining)}
+          </span>
+        )}
+      </div>
 
       {/* Pre-scan checklist — the four things that make a profile scannable */}
       <div className="petora-card p-5">
@@ -212,10 +256,41 @@ export default function PetScanner() {
 
       <button onClick={run} disabled={!canRun}
         className="w-full rounded-lg [background-image:var(--ramp-h)] [font-family:var(--font-display)] px-4 py-2.5 font-semibold text-[#1a1030] shadow-[0_10px_30px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40">
-        {loading
-          ? (leaderboard ? "Updating…" : "Scanning…")
-          : (leaderboard ? "Scan & update leaderboard" : "Scan & save")}
+        <span className="inline-flex items-center justify-center gap-2">
+          {loading && (
+            <span
+              className="h-4 w-4 animate-spin rounded-full border-2 border-[#1a1030]/30 border-t-[#1a1030]"
+              aria-hidden="true"
+            />
+          )}
+          {loading
+            ? (leaderboard ? "Updating…" : "Scanning…")
+            : (leaderboard ? "Scan & update leaderboard" : "Scan & save")}
+        </span>
       </button>
+
+      {/* Loading panel — replaces the old "~a minute" copy; scans are ~8s now. */}
+      {loading && (
+        <div className="petora-card flex items-center gap-3 p-4" role="status" aria-live="polite">
+          <span
+            className="h-5 w-5 flex-none animate-spin rounded-full border-2 border-[color:var(--line-2)] border-t-[color:var(--lilac)]"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-[color:var(--text)]">
+              {leaderboard ? "Verifying and updating your leaderboard entry…" : "Reading your screenshots…"}
+            </p>
+            <p className="mt-0.5 text-xs text-[color:var(--muted)]">This usually takes just a few seconds.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Daily-cap notices are informational, not failures → amber, separate from `error`. */}
+      {limitMsg && (
+        <div className="rounded-lg border border-[rgba(245,200,120,0.28)] bg-[rgba(245,200,120,0.08)] px-4 py-3 text-sm text-[#F5C878]">
+          {limitMsg}
+        </div>
+      )}
 
       {error && <div className="rounded-lg border border-[rgba(251,113,133,0.28)] bg-[rgba(251,113,133,0.10)] px-4 py-3 text-sm text-[#FCA5B6]">{error}</div>}
 
@@ -235,6 +310,12 @@ export default function PetScanner() {
                 ? `Updated — you're on the leaderboard with ${fmt(saved.total)}.`
                 : `Saved — ${saved.pets} scanned pet${saved.pets === 1 ? "" : "s"} ${saved.pets === 1 ? "is" : "are"} now tracked. Any pets you added manually were kept, and you're not on the leaderboard.`}
             </div>
+          )}
+          {budget && (
+            <p className="text-xs text-[color:var(--muted)]">
+              {budgetLabel(budget.remaining)}
+              {budget.remaining <= 0 ? " — your quota resets on a rolling 24h window." : "."}
+            </p>
           )}
           <div className="petora-card p-5">
             <p className="text-sm text-[color:var(--muted)]">Total value</p>

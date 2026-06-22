@@ -15,6 +15,15 @@
 //   substring of an unrelated, longer username (e.g. "Gamez" claiming a
 //   "JGamez567" board). A different-length, different name still fails outright.
 //
+// PERF (v4 - OCR gate early-exit):
+//   We now pass the verified `account` (profile.roblox_username) to the scanner so
+//   its OCR gate can stop the moment it reads a matching name instead of running
+//   all six Tesseract passes. This route STAYS the authoritative gate — it
+//   re-checks every candidate the scanner returns with usernameMatches() below —
+//   so the early-exit can only save OCR time, never change the accept/reject
+//   decision. If roblox_username is null we send "", and the scanner falls back to
+//   its full multi-pass behaviour.
+//
 // FIX (v2):
 //   Personal scans now also run a soft username check against the OCR gate.
 //   Previously, personal mode skipped the gate entirely, which meant anyone
@@ -123,6 +132,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'profile_not_found' }, { status: 403 });
   }
 
+  // service-role client (bypasses RLS) — used for the attempt counter/log below
+  // and for the authoritative portfolio writes later. Created once, reused.
+  const admin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } }
+  );
+
   // 3) inputs: images + the single leaderboard toggle
   const form = await req.formData();
   const files = form.getAll('files');
@@ -131,16 +148,90 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'expected_1_to_7_images' }, { status: 400 });
   }
 
-  // 4) UNIFIED daily limit — one scan/day on free tier, premium unlimited.
-  if (!profile.is_premium && profile.last_personal_scan_at) {
-    const elapsed = Date.now() - new Date(profile.last_personal_scan_at).getTime();
-    const DAY = 24 * 60 * 60 * 1000;
-    if (elapsed < DAY) {
-      return NextResponse.json(
-        { error: 'rate_limited', hours_left: Math.ceil((DAY - elapsed) / 3_600_000) },
-        { status: 429 }
-      );
-    }
+  // 4) UNIFIED daily limit — rolling 24h cap on ALL scans (personal + leaderboard
+  //    combined). Free: 2/day. Premium: 10/day. Every scan writes a
+  //    portfolio_snapshots row ('personal' or 'submit'), so we count this user's
+  //    snapshots in the trailing 24h instead of keeping a separate counter. The
+  //    check runs BEFORE the expensive server-side rescan, so an over-limit request
+  //    fails fast. Note: only scans that actually wrote a snapshot count — a
+  //    rejected scan (bad OCR match, scanner error) returns before the snapshot and
+  //    so does NOT burn a slot. Premium gating here relies on is_premium being set
+  //    correctly (see the premium/is_premium standardization, §5).
+  // 4) UNIFIED daily limits — rolling 24h, all scans (personal + leaderboard).
+  //
+  //    Two caps work together:
+  //      SUCCESS_LIMIT  counts scans that produced a snapshot ('personal'/'submit').
+  //                     This is the user-facing quota — bad photos never touch it.
+  //                     Free 2 / Premium 10.
+  //      ATTEMPT_LIMIT  counts EVERY pipeline run (scan_attempts), pass or fail.
+  //                     This is the compute-abuse guard: it bounds someone firing
+  //                     endless garbage that fails and would otherwise never count.
+  //                     Set above SUCCESS_LIMIT to leave room for genuine retries.
+  //                     Free 6 / Premium 25.
+  //
+  //    Checked here BEFORE the expensive rescan so an over-limit request fails fast.
+  //    Premium gating relies on is_premium being set correctly (see §5).
+  const DAY = 24 * 60 * 60 * 1000;
+  const SCAN_LIMIT = profile.is_premium ? 10 : 2;       // successful scans/day
+  const ATTEMPT_LIMIT = profile.is_premium ? 25 : 6;    // total pipeline runs/day
+  const windowStart = new Date(Date.now() - DAY).toISOString();
+
+  // successful scans in the window (from snapshots)
+  const { data: recentScans, error: limitErr } = await supabase
+    .from('portfolio_snapshots')
+    .select('recorded_at')
+    .eq('user_id', user.id)
+    .in('source', ['personal', 'submit'])
+    .gte('recorded_at', windowStart)
+    .order('recorded_at', { ascending: true });
+  if (limitErr) console.error('SCAN LIMIT COUNT FAILED:', limitErr);
+  const usedToday = limitErr ? 0 : (recentScans?.length ?? 0);
+
+  // total attempts in the window (pass or fail) — abuse guard
+  const { data: recentAttempts, error: attErr } = await admin
+    .from('scan_attempts')
+    .select('created_at')
+    .eq('user_id', user.id)
+    .gte('created_at', windowStart)
+    .order('created_at', { ascending: true });
+  if (attErr) console.error('ATTEMPT COUNT FAILED:', attErr);
+  const attemptsToday = attErr ? 0 : (recentAttempts?.length ?? 0);
+
+  // success quota reached → normal "you've used your scans" message
+  if (usedToday >= SCAN_LIMIT) {
+    const resetAt = new Date(recentScans![0].recorded_at).getTime() + DAY;
+    const hoursLeft = Math.max(1, Math.ceil((resetAt - Date.now()) / 3_600_000));
+    return NextResponse.json(
+      {
+        error: 'rate_limited',
+        limit: SCAN_LIMIT,
+        used: usedToday,
+        is_premium: profile.is_premium,
+        hours_left: hoursLeft,
+        reset_at: new Date(resetAt).toISOString(),
+        message: profile.is_premium
+          ? `You've used all ${SCAN_LIMIT} scans for today. Your next one opens in about ${hoursLeft}h.`
+          : `Free accounts get ${SCAN_LIMIT} scans per day. Try again in about ${hoursLeft}h, or upgrade to Premium for 10 per day.`,
+      },
+      { status: 429 }
+    );
+  }
+
+  // attempt cap reached (mostly failed scans) → slow-down message
+  if (attemptsToday >= ATTEMPT_LIMIT) {
+    const resetAt = new Date(recentAttempts![0].created_at).getTime() + DAY;
+    const hoursLeft = Math.max(1, Math.ceil((resetAt - Date.now()) / 3_600_000));
+    return NextResponse.json(
+      {
+        error: 'too_many_attempts',
+        attempt_limit: ATTEMPT_LIMIT,
+        attempts: attemptsToday,
+        hours_left: hoursLeft,
+        reset_at: new Date(resetAt).toISOString(),
+        message: `Too many scan attempts today. Make sure you're uploading clear screenshots of your pet menu, then try again in about ${hoursLeft}h.`,
+      },
+      { status: 429 }
+    );
   }
 
   // 5) leaderboard path requires Roblox verification — fail early
@@ -148,13 +239,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'roblox_verification_required' }, { status: 403 });
   }
 
+  // 5b) Log this attempt BEFORE the expensive rescan. Everything past this point
+  //     runs the full scanner pipeline, so it counts against ATTEMPT_LIMIT whether
+  //     it ultimately succeeds or fails. Cheap early rejects above (auth, roblox
+  //     verification) happen before this line and don't consume an attempt.
+  const { error: attLogErr } = await admin
+    .from('scan_attempts')
+    .insert({ user_id: user.id });
+  if (attLogErr) console.error('ATTEMPT LOG FAILED:', attLogErr);
+
   // 6) re-scan server-side. Both modes now request the OCR username gate.
   //    leaderboard mode: 'leaderboard' (hard gate)
   //    personal mode:    'personal_gated' (soft gate — scanner still returns
   //                      detected usernames so we can cross-check)
+  //
+  //    We also pass `account` (the verified roblox_username) so the scanner's OCR
+  //    gate can early-exit on a matching read. This route still re-checks every
+  //    returned candidate below, so the gate decision is unchanged — only faster.
   const scanForm = new FormData();
   for (const f of files) scanForm.append('files', f as Blob);
   scanForm.append('mode', wantsLeaderboard ? 'leaderboard' : 'personal_gated');
+  scanForm.append('account', profile.roblox_username ?? '');
 
   const scanUrl = process.env.SCAN_URL ?? process.env.NEXT_PUBLIC_SCAN_URL;
   const scanRes = await fetch(`${scanUrl}/scan`, { method: 'POST', body: scanForm });
@@ -203,12 +308,7 @@ export async function POST(req: Request) {
     }
   }
 
-  // 8) authoritative write with the SERVICE ROLE (bypasses RLS)
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
-  );
+  // 8) authoritative write with the SERVICE ROLE (admin client created above)
   const now = new Date().toISOString();
 
   const scanned = (scan.items ?? [])
@@ -290,5 +390,12 @@ export async function POST(req: Request) {
     total: scannedTotal,
     pets: scanned.length,
     items: scan.items,
+    // Submission budget so the scan UI can show "X scans left today".
+    // usedToday was the count BEFORE this scan; this scan adds one snapshot.
+    submissions: {
+      limit: SCAN_LIMIT,
+      used: usedToday + 1,
+      remaining: Math.max(0, SCAN_LIMIT - (usedToday + 1)),
+    },
   });
 }

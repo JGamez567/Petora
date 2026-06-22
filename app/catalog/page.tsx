@@ -51,13 +51,14 @@ export default function Catalog() {
   const [history, setHistory] = useState<{ ts: number; value: number }[]>([]);
   const [graphLoading, setGraphLoading] = useState(false);
 
-  // premium check
+  // premium check  (standardized on is_premium — was reading a non-existent
+  // `premium` column, which made everyone fail the gate. See handoff §5.)
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
       if (data.user) {
         const { data: prof } = await supabase
-          .from("profiles").select("premium").eq("id", data.user.id).single();
-        setPremium(prof?.premium ?? false);
+          .from("profiles").select("is_premium").eq("id", data.user.id).single();
+        setPremium(prof?.is_premium ?? false);
       }
       setPremiumChecked(true);
     });

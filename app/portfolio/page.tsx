@@ -9,6 +9,10 @@ type Item = {
   petId: number; name: string; icon_url: string | null;
   variantLabel: string; unitValue: number; quantity: number;
 };
+type Mover = {
+  variantId: number; petId: number; name: string; icon_url: string | null;
+  variantLabel: string; currentValue: number; change: number;
+};
 
 const TIERS = [
   { key: "normal", label: "Normal" },
@@ -61,6 +65,7 @@ export default function Portfolio() {
   const [potion, setPotion] = useState<(typeof POTIONS)[number]>(POTIONS[0]);
   const [quantity, setQuantity] = useState<string>("1"); // string: lets mobile clear the field mid-edit without snapping back to 1
   const [items, setItems] = useState<Item[]>([]);
+  const [movers, setMovers] = useState<Mover[]>([]);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<{ ts: number; value: number }[]>([]);
@@ -85,7 +90,9 @@ export default function Portfolio() {
       .then(({ data }) => setPets(data ?? []));
   }, []);
 
-  // load this user's saved portfolio (all personal rows — manual + scan)
+  // load this user's saved portfolio (all personal rows — manual + scan).
+  // unitValue comes from current_pet_values, so holdings always show the LIVE
+  // market value on load (nothing is frozen at add-time).
   useEffect(() => {
     if (!userId) return;
     async function loadItems() {
@@ -116,6 +123,25 @@ export default function Portfolio() {
       setItems(loaded);
     }
     loadItems();
+  }, [userId]);
+
+  // load which of THIS user's pets moved up/down in value over the last 7 days.
+  // get_my_portfolio_movers mirrors the catalog's get_movers logic (most recent
+  // value step within the window), scoped to the variants this user owns.
+  useEffect(() => {
+    if (!userId) return;
+    supabase.rpc("get_my_portfolio_movers", { window_hours: 168 }).then(({ data, error }) => {
+      if (error) { console.error(error); return; }
+      setMovers((data ?? []).map((r: any) => ({
+        variantId: r.pet_variant_id,
+        petId: r.pet_id,
+        name: r.name,
+        icon_url: r.icon_url,
+        variantLabel: variantLabel(r.neon, r.fly, r.ride),
+        currentValue: Number(r.current_value ?? 0),
+        change: Number(r.change ?? 0),
+      })));
+    });
   }, [userId]);
 
   // load this user's net-worth history for the selected range (all sources — it's their own progress)
@@ -379,6 +405,34 @@ export default function Portfolio() {
         <div className="petora-gradient mt-1 text-4xl font-bold tabular-nums [font-family:var(--font-data)]">{total.toLocaleString()}</div>
         <div className="mt-1 text-[13px] text-[color:var(--muted)]">{items.length} pet{items.length !== 1 ? "s" : ""}</div>
       </div>
+
+      {/* recent value changes in the user's own pets (last 7 days) */}
+      {movers.length > 0 && (
+        <div className="petora-card mb-5 p-5">
+          <div className="petora-eyebrow mb-3">Recent changes in your pets · last 7 days</div>
+          <div className="flex flex-col gap-2.5">
+            {movers.map((m) => {
+              const up = m.change > 0;
+              return (
+                <div key={m.variantId} className="flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {m.icon_url && <img src={m.icon_url} alt="" className="h-9 w-9 object-contain" />}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold text-[color:var(--text)]">{m.name}</div>
+                    <div className="text-[12px] text-[color:var(--muted)]">{m.variantLabel}</div>
+                  </div>
+                  <div className="text-right tabular-nums [font-family:var(--font-data)]">
+                    <div className="font-bold text-[color:var(--lilac)]">{m.currentValue.toLocaleString()}</div>
+                    <div className="text-[13px] font-bold" style={{ color: up ? "var(--up)" : "var(--down)" }}>
+                      {up ? "▲ +" : "▼ "}{m.change.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* holdings */}
       {items.length === 0 ? (
