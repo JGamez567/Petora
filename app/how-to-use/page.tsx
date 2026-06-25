@@ -1,5 +1,6 @@
 // app/how-to-use/page.tsx
 import Link from "next/link";
+import Image from "next/image";
 
 export const metadata = {
   title: "How to use Petora",
@@ -102,16 +103,6 @@ export default function HowToUsePage() {
               </p>
 
               {step.media && (
-                /* ───────────────────────────────────────────────────────────
-                   TWO EXAMPLE SCREENSHOTS GO HERE — a good one and a bad one.
-                   1. Drop your images into the /public folder, e.g.
-                        public/how-to-example.png       (the GOOD submission)
-                        public/how-to-bad-example.png   (the BAD submission)
-                   2. In each card below, delete the
-                      <div className="petora-img-placeholder"> block and
-                      uncomment the matching <Image /> block.
-                   (Add `import Image from "next/image";` to the top of the file.)
-                   ─────────────────────────────────────────────────────────── */
                 <div
                   style={{
                     display: "grid",
@@ -120,7 +111,6 @@ export default function HowToUsePage() {
                     margin: "16px 0 4px",
                   }}
                 >
-                  {/* ── GOOD example ───────────────────────────────────────── */}
                   <figure style={{ margin: 0 }}>
                     <span
                       style={{
@@ -136,37 +126,6 @@ export default function HowToUsePage() {
                     >
                       <span aria-hidden="true">✓</span> Good
                     </span>
-
-                    <div
-                      className="petora-img-placeholder"
-                      style={{
-                        aspectRatio: "16 / 10",
-                        borderRadius: 12,
-                        border: "1.5px dashed var(--up)",
-                        background: "rgba(74,222,128,.05)",
-                        display: "grid",
-                        placeItems: "center",
-                        textAlign: "center",
-                      }}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            fontFamily: "var(--font-display)",
-                            fontWeight: 600,
-                            color: "var(--up)",
-                            fontSize: 14,
-                          }}
-                        >
-                          Good submission
-                        </div>
-                        <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 4 }}>
-                          You'll add this — public/how-to-example.png
-                        </div>
-                      </div>
-                    </div>
-
-                    {/*
                     <Image
                       src="/how-to-example.png"
                       alt="A correct Petora submission: the full Adopt Me profile in one shot with the username visible at the top"
@@ -174,14 +133,11 @@ export default function HowToUsePage() {
                       height={800}
                       style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid var(--line)" }}
                     />
-                    */}
-
                     <figcaption style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>
                       Your whole Adopt Me profile in one shot, username at the top, nothing cropped.
                     </figcaption>
                   </figure>
 
-                  {/* ── BAD example ────────────────────────────────────────── */}
                   <figure style={{ margin: 0 }}>
                     <span
                       style={{
@@ -197,37 +153,6 @@ export default function HowToUsePage() {
                     >
                       <span aria-hidden="true">✕</span> Won't work
                     </span>
-
-                    <div
-                      className="petora-img-placeholder"
-                      style={{
-                        aspectRatio: "16 / 10",
-                        borderRadius: 12,
-                        border: "1.5px dashed var(--down, #fb7185)",
-                        background: "rgba(251,113,133,.05)",
-                        display: "grid",
-                        placeItems: "center",
-                        textAlign: "center",
-                      }}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            fontFamily: "var(--font-display)",
-                            fontWeight: 600,
-                            color: "var(--down, #fb7185)",
-                            fontSize: 14,
-                          }}
-                        >
-                          Bad submission
-                        </div>
-                        <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 4 }}>
-                          You'll add this — public/how-to-bad-example.png
-                        </div>
-                      </div>
-                    </div>
-
-                    {/*
                     <Image
                       src="/how-to-bad-example.png"
                       alt="A submission Petora can't read: the Adopt Me profile is cropped, blurry, or covered by a menu, and the username isn't visible"
@@ -235,8 +160,6 @@ export default function HowToUsePage() {
                       height={800}
                       style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid var(--line)" }}
                     />
-                    */}
-
                     <figcaption style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>
                       Cropped, blurry, or covered by a menu, with the username cut off — Petora may misread or reject it.
                     </figcaption>
@@ -281,8 +204,8 @@ export default function HowToUsePage() {
           ))}
         </ul>
         <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.55, margin: "14px 0 0" }}>
-          Free accounts can submit once every 24 hours, so make your screenshot count.
-          Premium can re-scan any time.
+          Free accounts can submit twice every 24 hours, so make your screenshot count.
+          Premium can re-scan up to 10 times every day.
         </p>
       </div>
 

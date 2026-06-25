@@ -8,7 +8,7 @@ export const metadata = {
 };
 
 const EFFECTIVE_DATE = "June 18, 2026";
-const CONTACT_EMAIL = "support@petoratracker.com"; // TODO: set to a real inbox you monitor
+const CONTACT_EMAIL = "petoratracker@gmail.com"; // TODO: set to a real inbox you monitor
 
 export default function TermsPage() {
   return (

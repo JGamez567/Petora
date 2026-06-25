@@ -10,6 +10,7 @@ const LINKS: { href: string; label: string; soon?: boolean }[] = [
   { href: "/portfolio", label: "My Portfolio" },
   { href: "/scan", label: "Scan" },
   { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/premium", label: "Premium" },
   { href: "/how-to-use", label: "How to use" },
   { href: "/trade-feedback", label: "Trade Feedback", soon: true },
 ];

@@ -201,7 +201,7 @@ export default function PremiumPage() {
             className="inline-flex w-full items-center justify-center gap-2 rounded-lg [background-image:var(--ramp-h)] [font-family:var(--font-display)] px-6 py-3 font-semibold text-[#1a1030] shadow-[0_10px_30px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
             {busy === "monthly" ? <Spinner dark /> : null}
-            Get Premium — $4.99/mo
+            Get Premium — $2.99/mo
           </button>
           <button
             onClick={() => startCheckout("lifetime")}
@@ -209,7 +209,7 @@ export default function PremiumPage() {
             className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[color:var(--line-2)] px-6 py-3 font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
             {busy === "lifetime" ? <Spinner /> : null}
-            Lifetime — $24.99 once
+            Lifetime — $14.99 once
           </button>
         </div>
         <p className="mt-3 text-xs text-[color:var(--muted)]">Secured by Stripe · Cancel your monthly plan anytime</p>
@@ -255,10 +255,16 @@ export default function PremiumPage() {
         <div className="mx-auto mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">
           {/* Monthly */}
           <div className="petora-card flex flex-col p-6">
-            <p className="text-sm font-medium text-[color:var(--muted)]">Monthly</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-[color:var(--muted)]">Monthly</p>
+              <span className="rounded-full border border-[rgba(168,85,247,0.35)] bg-[rgba(168,85,247,0.08)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--lilac)]">
+                Launch price
+              </span>
+            </div>
             <p className="mt-2 [font-family:var(--font-data)]">
-              <span className="text-4xl font-bold text-[color:var(--text)]">$4.99</span>
+              <span className="text-4xl font-bold text-[color:var(--text)]">$2.99</span>
               <span className="text-sm text-[color:var(--muted)]"> / month</span>
+              <span className="ml-2 text-sm text-[color:var(--muted)] line-through opacity-70">$4.99</span>
             </p>
             <p className="mt-2 text-sm text-[color:var(--muted)]">All Premium features. Cancel anytime.</p>
             <button
@@ -278,8 +284,9 @@ export default function PremiumPage() {
             </span>
             <p className="text-sm font-medium text-[color:var(--lilac)]">Lifetime</p>
             <p className="mt-2 [font-family:var(--font-data)]">
-              <span className="petora-gradient text-4xl font-bold">$24.99</span>
+              <span className="petora-gradient text-4xl font-bold">$14.99</span>
               <span className="text-sm text-[color:var(--muted)]"> once</span>
+              <span className="ml-2 text-sm text-[color:var(--muted)] line-through opacity-70">$24.99</span>
             </p>
             <p className="mt-2 text-sm text-[color:var(--muted)]">Pay once, keep Premium forever. No subscription.</p>
             <button

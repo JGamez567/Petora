@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -40,6 +40,14 @@ const features = [
   },
 ];
 
+function Sparkle({ className = "", style }: { className?: string; style?: CSSProperties }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} style={style} aria-hidden="true">
+      <path d="M12 2 13.8 10.2 22 12 13.8 13.8 12 22 10.2 13.8 2 12 10.2 10.2Z" />
+    </svg>
+  );
+}
+
 export default function Home() {
   const [rows, setRows] = useState<Row[]>([]);
   const [email, setEmail] = useState<string | null>(null);
@@ -74,14 +82,55 @@ export default function Home() {
   const top = rows[0];
 
   return (
-    <main className="mx-auto max-w-5xl px-6 pb-24 pt-16">
+    <main className="relative mx-auto max-w-5xl px-6 pb-24 pt-16">
+      {/* scoped animations — prefixed to avoid global collisions */}
+      <style>{`
+        @keyframes ptrFadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes ptrTwinkle { 0%,100%{opacity:.12;transform:scale(.7)} 50%{opacity:1;transform:scale(1)} }
+        @keyframes ptrFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+        @keyframes ptrShimmer { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
+        @keyframes ptrDraw { to{stroke-dashoffset:0} }
+        @keyframes ptrPulse { 0%,100%{r:4.5;opacity:1} 50%{r:7;opacity:.55} }
+        @keyframes ptrGlow { 0%,100%{opacity:.30;transform:scale(1)} 50%{opacity:.55;transform:scale(1.1)} }
+        .ptr-fade { opacity:0; animation: ptrFadeUp .7s cubic-bezier(.2,.7,.2,1) forwards; }
+        .ptr-twinkle { animation: ptrTwinkle 3.4s ease-in-out infinite; }
+        .ptr-float { animation: ptrFloat 6.5s ease-in-out infinite; }
+        .ptr-shimmer {
+          background: linear-gradient(100deg,#A855F7,#C4B5FD,#FFFFFF,#C4B5FD,#A855F7);
+          background-size:200% auto; -webkit-background-clip:text; background-clip:text;
+          color:transparent; animation: ptrShimmer 6s linear infinite;
+        }
+        .ptr-draw { stroke-dasharray:620; stroke-dashoffset:620; animation: ptrDraw 1.9s ease-out .35s forwards; }
+        .ptr-pulse { animation: ptrPulse 2.4s ease-in-out infinite; }
+        .ptr-glow { animation: ptrGlow 8s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .ptr-fade,.ptr-twinkle,.ptr-float,.ptr-shimmer,.ptr-draw,.ptr-pulse,.ptr-glow {
+            animation:none!important; opacity:1!important;
+          }
+          .ptr-shimmer { color:var(--lilac)!important; }
+          .ptr-draw { stroke-dashoffset:0!important; }
+        }
+      `}</style>
+
+      {/* soft drifting glow behind the hero */}
+      <div
+        className="ptr-glow pointer-events-none absolute -top-24 left-1/4 h-72 w-72 rounded-full"
+        style={{ background: "radial-gradient(circle, rgba(168,85,247,0.22), transparent 70%)" }}
+        aria-hidden="true"
+      />
+
       {/* hero */}
-      <section className="grid items-center gap-10 md:grid-cols-[1.1fr_0.9fr]">
-        <div>
+      <section className="relative grid items-center gap-10 md:grid-cols-[1.1fr_0.9fr]">
+        {/* twinkling sparkles */}
+        <Sparkle className="ptr-twinkle pointer-events-none absolute -left-2 top-0 h-4 w-4 text-[color:var(--lilac)]" style={{ animationDelay: "0s" }} />
+        <Sparkle className="ptr-twinkle pointer-events-none absolute right-1/3 -top-6 h-3 w-3 text-[#C4B5FD]" style={{ animationDelay: "1.3s" }} />
+        <Sparkle className="ptr-twinkle pointer-events-none absolute left-1/2 top-1/3 h-2.5 w-2.5 text-[#A855F7]" style={{ animationDelay: "2.1s" }} />
+
+        <div className="ptr-fade" style={{ animationDelay: "0ms" }}>
           <p className="petora-eyebrow">Adopt Me portfolio tracker</p>
           <h1 className="mt-3 text-[clamp(34px,6vw,54px)] font-bold leading-[1.05] text-[color:var(--text)] [font-family:var(--font-display)]">
             Track every pet.<br />
-            Watch your <span className="petora-gradient">net worth</span> climb.
+            Watch your <span className="ptr-shimmer">net worth</span> climb.
           </h1>
           <p className="mt-5 max-w-md text-[16px] leading-relaxed text-[color:var(--muted)]">
             Petora scans your Adopt Me profile, values every pet from live market data, and ranks you
@@ -94,7 +143,7 @@ export default function Home() {
                   <>
                     <Link
                       href="/portfolio"
-                      className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+                      className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 hover:-translate-y-0.5 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
                     >
                       Go to my portfolio
                     </Link>
@@ -115,7 +164,7 @@ export default function Home() {
                   <>
                     <Link
                       href="/login"
-                      className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+                      className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 hover:-translate-y-0.5 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
                     >
                       Get started
                     </Link>
@@ -142,7 +191,7 @@ export default function Home() {
         </div>
 
         {/* live top-trader card */}
-        <div className="petora-card relative overflow-hidden p-7" style={{ borderColor: "var(--line-2)", boxShadow: "0 24px 60px -30px rgba(124,58,237,0.55)" }}>
+        <div className="ptr-fade ptr-float petora-card relative overflow-hidden p-7" style={{ animationDelay: "140ms", borderColor: "var(--line-2)", boxShadow: "0 24px 60px -30px rgba(124,58,237,0.55)" }}>
           <p className="petora-eyebrow">Top trader right now</p>
           <div className="mt-3 text-[15px] font-semibold text-[color:var(--text)]">
             {top ? top.username : "—"}
@@ -161,14 +210,14 @@ export default function Home() {
               </linearGradient>
             </defs>
             <path d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12 L400,90 L0,90 Z" fill="url(#under)" />
-            <path d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12" fill="none" stroke="url(#line)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            <circle cx="400" cy="12" r="4.5" fill="#fff" />
+            <path className="ptr-draw" d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12" fill="none" stroke="url(#line)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            <circle className="ptr-pulse" cx="400" cy="12" r="4.5" fill="#fff" />
           </svg>
         </div>
       </section>
 
       {/* Elvebredd credit — prominent values-source attribution */}
-      <section className="mt-12">
+      <section className="ptr-fade mt-12" style={{ animationDelay: "200ms" }}>
         <div className="petora-card relative overflow-hidden p-6 sm:p-7" style={{ borderColor: "var(--line-2)", boxShadow: "0 24px 60px -34px rgba(124,58,237,0.5)" }}>
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="max-w-2xl">
@@ -195,7 +244,7 @@ export default function Home() {
               href="https://elvebredd.com/"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex flex-none items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+              className="inline-flex flex-none items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 hover:-translate-y-0.5 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
             >
               Visit Elvebredd →
             </a>
@@ -205,9 +254,13 @@ export default function Home() {
 
       {/* features */}
       <section className="mt-20 grid gap-4 sm:grid-cols-3">
-        {features.map((f) => (
-          <div key={f.title} className="petora-card p-6">
-            <span className="grid h-10 w-10 place-items-center rounded-xl text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.10)", border: "1px solid var(--line-2)" }}>
+        {features.map((f, i) => (
+          <div
+            key={f.title}
+            className="ptr-fade petora-card group p-6 transition hover:-translate-y-1 hover:border-[color:var(--line-2)]"
+            style={{ animationDelay: `${260 + i * 110}ms` }}
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl text-[color:var(--lilac)] transition group-hover:scale-110" style={{ background: "rgba(168,139,250,0.10)", border: "1px solid var(--line-2)" }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 {f.icon}
               </svg>
@@ -220,7 +273,7 @@ export default function Home() {
 
       {/* leaderboard preview */}
       {rows.length > 0 && (
-        <section className="mt-20">
+        <section className="ptr-fade mt-20" style={{ animationDelay: "320ms" }}>
           <div className="mb-4 flex items-end justify-between">
             <div>
               <p className="petora-eyebrow">Live leaderboard</p>
@@ -231,8 +284,12 @@ export default function Home() {
             </Link>
           </div>
           <div className="petora-card overflow-hidden">
-            {rows.map((r) => (
-              <div key={`${r.rank}-${r.username}`} className="grid grid-cols-[44px_1fr_auto] items-center gap-3 px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-[color:var(--line)]">
+            {rows.map((r, i) => (
+              <div
+                key={`${r.rank}-${r.username}`}
+                className="ptr-fade grid grid-cols-[44px_1fr_auto] items-center gap-3 px-4 py-3 transition hover:bg-[rgba(168,139,250,0.06)] [&:not(:last-child)]:border-b [&:not(:last-child)]:border-[color:var(--line)]"
+                style={{ animationDelay: `${360 + i * 70}ms` }}
+              >
                 {r.rank <= 3 ? (
                   <span className="grid place-items-center rounded-[9px] py-1 text-sm font-bold text-[#1a1030] shadow-[0_0_16px_rgba(168,85,247,0.5)] [background-image:var(--ramp)] [font-family:var(--font-data)]">{r.rank}</span>
                 ) : (

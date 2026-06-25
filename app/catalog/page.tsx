@@ -33,6 +33,25 @@ const RANGES = [
   { key: "month", label: "Month", days: 30 },
 ] as const;
 
+// Rarity filter + color coding.
+//   dot   = the circle swatch (Legendary is black, ringed so it's visible on the dark theme)
+//   ring  = swatch border
+//   color = active-chip tint + text (Legendary uses a light gray so the chip reads on dark bg)
+// Ordered highest -> lowest rarity to match the default high -> low value sort.
+const RARITIES = [
+  { key: "legendary", label: "Legendary",  dot: "#0A0A0F", ring: "#6B7280", color: "#C9CDD6" },
+  { key: "ultrarare", label: "Ultra Rare", dot: "#F87171", ring: "#F87171", color: "#F87171" },
+  { key: "rare",      label: "Rare",       dot: "#4ADE80", ring: "#4ADE80", color: "#4ADE80" },
+  { key: "uncommon",  label: "Uncommon",   dot: "#C084FC", ring: "#C084FC", color: "#C084FC" },
+  { key: "common",    label: "Common",     dot: "#60A5FA", ring: "#60A5FA", color: "#60A5FA" },
+] as const;
+
+// Normalize the stored rarity for matching: lowercase, strip spaces/hyphens/digits.
+// So "Ultra-Rare", "ultra rare", "ULTRARARE" all collapse to "ultrarare".
+// Matched by EXACT equality (not includes) so "rare" never matches "ultrarare".
+const normRarity = (r: string | null) => (r ?? "").toLowerCase().replace(/[^a-z]/g, "");
+const rarityMeta = (r: string | null) => RARITIES.find((x) => x.key === normRarity(r)) ?? null;
+
 export default function Catalog() {
   const [premium, setPremium] = useState(false);
   const [premiumChecked, setPremiumChecked] = useState(false);
@@ -40,6 +59,10 @@ export default function Catalog() {
   const [pets, setPets] = useState<Pet[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+
+  // grid controls
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");        // default: value high -> low
+  const [rarityFilter, setRarityFilter] = useState<string | null>(null); // normalized key, or null = all
 
   const [tab, setTab] = useState<"all" | "rising" | "falling">("all");
   const [movers, setMovers] = useState<Mover[]>([]);
@@ -64,7 +87,7 @@ export default function Catalog() {
     });
   }, []);
 
-  // load grid
+  // load grid — values shown are Normal Fly & Ride (the catalog default).
   useEffect(() => {
     async function load() {
       const { data, error } = await supabase
@@ -72,8 +95,8 @@ export default function Catalog() {
         .select(`id, name, rarity, icon_url,
           pet_variants!inner ( neon, fly, ride, current_pet_values ( value ) )`)
         .eq("pet_variants.neon", "normal")
-        .eq("pet_variants.fly", false)
-        .eq("pet_variants.ride", false)
+        .eq("pet_variants.fly", true)
+        .eq("pet_variants.ride", true)
         .order("name");
       if (error) { console.error(error); setLoading(false); return; }
       setPets((data ?? []).map((p: any) => ({
@@ -124,7 +147,18 @@ export default function Catalog() {
     loadHistory();
   }, [selected, tier, potion, range]);
 
-  const filtered = pets.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+  // search -> rarity -> sort. Nulls (no value yet) always sink to the bottom
+  // regardless of direction.
+  const filtered = pets
+    .filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((p) => !rarityFilter || normRarity(p.rarity) === rarityFilter)
+    .sort((a, b) => {
+      if (a.value == null && b.value == null) return 0;
+      if (a.value == null) return 1;
+      if (b.value == null) return -1;
+      return sortDir === "desc" ? b.value - a.value : a.value - b.value;
+    });
+
   const rising = movers.filter((m) => m.change > 0).sort((a, b) => b.change - a.change);
   const falling = movers.filter((m) => m.change < 0).sort((a, b) => a.change - b.change);
 
@@ -154,7 +188,7 @@ export default function Catalog() {
             Value graphs and Rising / Falling trends across every pet are a Premium feature.
           </p>
           <button
-            onClick={() => alert("Premium checkout coming soon — Stripe will go here.")}
+            onClick={() => { window.location.href = "/premium"; }}
             className="mt-6 rounded-full px-7 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
           >
             Upgrade to Premium
@@ -208,7 +242,7 @@ export default function Catalog() {
     <main className="mx-auto max-w-5xl px-6 py-10">
       <p className="petora-eyebrow">Live market</p>
       <h1 className="mt-1.5 text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">Pet catalog</h1>
-      <p className="mt-2 text-sm text-[color:var(--muted)]">{pets.length} pets · tap one to see its value history</p>
+      <p className="mt-2 text-sm text-[color:var(--muted)]">{filtered.length} pets · tap one to see its value history</p>
 
       <div className="mt-6 mb-5 inline-flex rounded-[10px] bg-[rgba(168,139,250,0.07)] p-1">
         {tabBtn("all", "All pets")}
@@ -222,26 +256,89 @@ export default function Catalog() {
             placeholder="Search pets…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="mb-6 w-full rounded-lg border border-[color:var(--line)] bg-[color:var(--surface)] px-4 py-2.5 text-[15px] text-[color:var(--text)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--violet)]"
+            className="mb-4 w-full rounded-lg border border-[color:var(--line)] bg-[color:var(--surface)] px-4 py-2.5 text-[15px] text-[color:var(--text)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--violet)]"
           />
+
+          {/* Rarity filter */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Rarity</span>
+            <button
+              onClick={() => setRarityFilter(null)}
+              className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
+                rarityFilter === null
+                  ? "border border-[color:var(--violet)] bg-[rgba(168,85,247,0.16)] text-[color:var(--lilac)]"
+                  : "border border-[color:var(--line)] text-[color:var(--muted)] hover:text-[color:var(--text)]"
+              }`}
+            >
+              All
+            </button>
+            {RARITIES.map((r) => {
+              const active = rarityFilter === r.key;
+              return (
+                <button
+                  key={r.key}
+                  onClick={() => setRarityFilter(active ? null : r.key)}
+                  className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[13px] font-medium transition"
+                  style={
+                    active
+                      ? { borderColor: r.ring, background: `${r.color}1A`, color: r.color }
+                      : { borderColor: "var(--line)", color: "var(--muted)" }
+                  }
+                >
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: r.dot, boxShadow: `0 0 0 1px ${r.ring}` }} />
+                  {r.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Sort direction */}
+          <div className="mb-6 flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Sort</span>
+            {([
+              { key: "desc", label: "Value: High → Low" },
+              { key: "asc",  label: "Value: Low → High" },
+            ] as const).map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setSortDir(s.key)}
+                className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
+                  sortDir === s.key
+                    ? "border border-[color:var(--violet)] bg-[rgba(168,85,247,0.16)] text-[color:var(--lilac)]"
+                    : "border border-[color:var(--line)] text-[color:var(--muted)] hover:text-[color:var(--text)]"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+
           {loading ? (
             <p className="text-[color:var(--muted)]">Loading…</p>
           ) : (
             <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
-              {filtered.map((pet) => (
-                <div
-                  key={pet.id}
-                  onClick={() => openPet(pet)}
-                  className="petora-card cursor-pointer p-4 text-center transition hover:border-[color:var(--line-2)] hover:bg-[rgba(168,139,250,0.06)]"
-                >
-                  {pet.icon_url && <img src={pet.icon_url} alt={pet.name} className="mx-auto h-[72px] w-[72px] object-contain" />}
-                  <div className="mt-2 text-sm font-semibold text-[color:var(--text)]">{pet.name}</div>
-                  <div className="text-xs capitalize text-[color:var(--muted)]">{pet.rarity}</div>
-                  <div className="mt-1.5 font-bold text-[color:var(--lilac)] [font-family:var(--font-data)]">
-                    {pet.value != null ? pet.value.toLocaleString() : "—"}
+              {filtered.map((pet) => {
+                const meta = rarityMeta(pet.rarity);
+                return (
+                  <div
+                    key={pet.id}
+                    onClick={() => openPet(pet)}
+                    className="petora-card cursor-pointer p-4 text-center transition hover:border-[color:var(--line-2)] hover:bg-[rgba(168,139,250,0.06)]"
+                  >
+                    {pet.icon_url && <img src={pet.icon_url} alt={pet.name} className="mx-auto h-[72px] w-[72px] object-contain" />}
+                    <div className="mt-2 text-sm font-semibold text-[color:var(--text)]">{pet.name}</div>
+                    <div className="mt-1 flex items-center justify-center gap-1.5">
+                      {meta && (
+                        <span className="h-2 w-2 rounded-full" style={{ background: meta.dot, boxShadow: `0 0 0 1px ${meta.ring}` }} />
+                      )}
+                      <span className="text-xs capitalize text-[color:var(--muted)]">{pet.rarity}</span>
+                    </div>
+                    <div className="mt-1.5 font-bold text-[color:var(--lilac)] [font-family:var(--font-data)]">
+                      {pet.value != null ? pet.value.toLocaleString() : "—"}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
