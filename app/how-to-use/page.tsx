@@ -134,7 +134,7 @@ export default function HowToUsePage() {
                       style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid var(--line)" }}
                     />
                     <figcaption style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>
-                      Your whole Adopt Me profile in one shot, username at the top, nothing cropped.
+                      Only your Adopt Me profile in one shot, username at the top, nothing cropped or anything blocking it.
                     </figcaption>
                   </figure>
 
@@ -161,7 +161,7 @@ export default function HowToUsePage() {
                       style={{ width: "100%", height: "auto", borderRadius: 12, border: "1px solid var(--line)" }}
                     />
                     <figcaption style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 8, lineHeight: 1.5 }}>
-                      Cropped, blurry, or covered by a menu, with the username cut off — Petora may misread or reject it.
+                      Not Cropped, blurry, or covered by a menu, with stickers covering the pets — Petora may misread or reject it.
                     </figcaption>
                   </figure>
                 </div>

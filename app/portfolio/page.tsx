@@ -1,6 +1,6 @@
 "use client";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type PetLite = { id: number; name: string; icon_url: string | null };
@@ -53,10 +53,64 @@ function clampQty(raw: string | number): number {
   return Math.min(MAX_QTY, n);
 }
 
+// Animated count-up toward `target`. Eases out over `duration` ms via rAF.
+// Respects prefers-reduced-motion (snaps instantly). Re-animates from the
+// previous displayed value when the target changes, so add/remove feels alive.
+function useCountUp(target: number, duration = 800): number {
+  const [display, setDisplay] = useState(0);
+  const fromRef = useRef(0);
+
+  useEffect(() => {
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { fromRef.current = target; setDisplay(target); return; }
+
+    const from = fromRef.current;
+    if (from === target) { setDisplay(target); return; }
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      setDisplay(Math.round(from + (target - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); fromRef.current = target; };
+  }, [target, duration]);
+
+  return display;
+}
+
+// Shimmering placeholder bar for loading states.
+function Skel({ className = "" }: { className?: string }) {
+  return <div className={`ptr-skel rounded-md ${className}`} aria-hidden="true" />;
+}
+
+// Skeleton for a holdings/movers-style row inside a card.
+function SkelRow() {
+  return (
+    <div className="petora-card flex items-center gap-3 p-3">
+      <Skel className="h-10 w-10 shrink-0 rounded-lg" />
+      <div className="min-w-0 flex-1">
+        <Skel className="h-4 w-32 max-w-[60%]" />
+        <Skel className="mt-2 h-3 w-24 max-w-[45%]" />
+      </div>
+      <div className="flex flex-col items-end">
+        <Skel className="h-4 w-16" />
+        <Skel className="mt-2 h-3 w-10" />
+      </div>
+    </div>
+  );
+}
+
 export default function Portfolio() {
   const [userId, setUserId] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [premium, setPremium] = useState(false);
+  const [premiumChecked, setPremiumChecked] = useState(false);
 
   const [pets, setPets] = useState<PetLite[]>([]);
   const [search, setSearch] = useState("");
@@ -65,10 +119,13 @@ export default function Portfolio() {
   const [potion, setPotion] = useState<(typeof POTIONS)[number]>(POTIONS[0]);
   const [quantity, setQuantity] = useState<string>("1"); // string: lets mobile clear the field mid-edit without snapping back to 1
   const [items, setItems] = useState<Item[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(true);
   const [movers, setMovers] = useState<Mover[]>([]);
+  const [moversLoading, setMoversLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<{ ts: number; value: number }[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(true);
   const [range, setRange] = useState<(typeof RANGES)[number]>(RANGES[4]); // default: All time
 
   // who's logged in + premium status
@@ -80,6 +137,7 @@ export default function Portfolio() {
           .from("profiles").select("is_premium").eq("id", data.user.id).single();
         setPremium(prof?.is_premium ?? false);
       }
+      setPremiumChecked(true);
       setAuthChecked(true);
     });
   }, []);
@@ -121,6 +179,7 @@ export default function Portfolio() {
         };
       });
       setItems(loaded);
+      setItemsLoading(false);
     }
     loadItems();
   }, [userId]);
@@ -128,10 +187,13 @@ export default function Portfolio() {
   // load which of THIS user's pets moved up/down in value over the last 7 days.
   // get_my_portfolio_movers mirrors the catalog's get_movers logic (most recent
   // value step within the window), scoped to the variants this user owns.
+  // PREMIUM ONLY — free users see the locked upsell instead, so we don't even
+  // call the RPC for them (UI-side gating, consistent with the catalog).
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !premiumChecked) return;
+    if (!premium) { setMoversLoading(false); return; }
     supabase.rpc("get_my_portfolio_movers", { window_hours: 168 }).then(({ data, error }) => {
-      if (error) { console.error(error); return; }
+      if (error) { console.error(error); setMoversLoading(false); return; }
       setMovers((data ?? []).map((r: any) => ({
         variantId: r.pet_variant_id,
         petId: r.pet_id,
@@ -141,12 +203,14 @@ export default function Portfolio() {
         currentValue: Number(r.current_value ?? 0),
         change: Number(r.change ?? 0),
       })));
+      setMoversLoading(false);
     });
-  }, [userId]);
+  }, [userId, premium, premiumChecked]);
 
   // load this user's net-worth history for the selected range (all sources — it's their own progress)
   useEffect(() => {
     if (!userId) return;
+    setSnapshotsLoading(true);
     let q = supabase
       .from("portfolio_snapshots")
       .select("total_value, recorded_at")
@@ -160,6 +224,7 @@ export default function Portfolio() {
         ts: new Date(r.recorded_at).getTime(),
         value: Number(r.total_value),
       })));
+      setSnapshotsLoading(false);
     });
   }, [userId, range]);
 
@@ -230,12 +295,85 @@ export default function Portfolio() {
   }
 
   const total = items.reduce((s, i) => s + i.unitValue * i.quantity, 0);
+  const animatedTotal = useCountUp(total);
+
+  // largest absolute change among movers — drives the magnitude bars
+  const maxMove = movers.reduce((m, x) => Math.max(m, Math.abs(x.change)), 0);
+
+  // Scoped animation system for this page. ptr- prefix keeps it collision-free
+  // with the home/premium blocks; everything is guarded for reduced motion.
+  const pageStyles = (
+    <style>{`
+      @keyframes ptrFadeUp {
+        from { opacity: 0; transform: translateY(14px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes ptrFadeIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+      @keyframes ptrSkelShimmer {
+        from { background-position: 200% 0; }
+        to   { background-position: -200% 0; }
+      }
+      @keyframes ptrBarGrow {
+        from { transform: scaleX(0); }
+        to   { transform: scaleX(1); }
+      }
+      @keyframes ptrLockPulse {
+        0%, 100% { transform: translateY(0); }
+        50%      { transform: translateY(-4px); }
+      }
+      .ptr-reveal {
+        opacity: 0;
+        animation: ptrFadeUp 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      }
+      .ptr-fade {
+        animation: ptrFadeIn 0.25s ease-out;
+      }
+      .ptr-skel {
+        background: linear-gradient(
+          90deg,
+          rgba(168, 139, 250, 0.07) 25%,
+          rgba(168, 139, 250, 0.16) 50%,
+          rgba(168, 139, 250, 0.07) 75%
+        );
+        background-size: 200% 100%;
+        animation: ptrSkelShimmer 1.4s linear infinite;
+      }
+      .ptr-bar {
+        transform-origin: left center;
+        animation: ptrBarGrow 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      .ptr-lock-icon {
+        animation: ptrLockPulse 2.6s ease-in-out infinite;
+      }
+      .ptr-lift {
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      }
+      .ptr-lift:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 30px -14px rgba(168, 85, 247, 0.45);
+        border-color: var(--line-2);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ptr-reveal, .ptr-fade, .ptr-bar, .ptr-lock-icon {
+          animation: none !important;
+          opacity: 1 !important;
+          transform: none !important;
+        }
+        .ptr-skel { animation: none !important; }
+        .ptr-lift, .ptr-lift:hover { transition: none !important; transform: none !important; }
+      }
+    `}</style>
+  );
 
   // not logged in
   if (authChecked && !userId) {
     return (
       <main className="mx-auto max-w-xl px-6 py-24 text-center">
-        <div className="petora-card mx-auto p-10" style={{ borderColor: "var(--line-2)" }}>
+        {pageStyles}
+        <div className="petora-card ptr-reveal mx-auto p-10" style={{ borderColor: "var(--line-2)" }}>
           <h1 className="text-2xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">My Portfolio</h1>
           <p className="mx-auto mt-3 max-w-sm text-[15px] text-[color:var(--muted)]">Log in to build and save your portfolio.</p>
           <a href="/login"
@@ -249,20 +387,24 @@ export default function Portfolio() {
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-10">
-      <p className="petora-eyebrow">Your account</p>
-      <h1 className="mt-1.5 text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">My portfolio</h1>
-      <p className="mt-2 text-sm text-[color:var(--muted)]">Add your pets to track your total Elve value.</p>
+      {pageStyles}
+
+      <div className="ptr-reveal">
+        <p className="petora-eyebrow">Your account</p>
+        <h1 className="mt-1.5 text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">My portfolio</h1>
+        <p className="mt-2 text-sm text-[color:var(--muted)]">Add your pets to track your total Elve value.</p>
+      </div>
 
       {/* add a pet */}
-      <div className="petora-card mt-6 mb-6 p-5">
+      <div className="petora-card ptr-reveal mt-6 mb-6 p-5" style={{ animationDelay: "60ms" }}>
         <input
           placeholder="Search a pet to add…"
           value={picked ? picked.name : search}
           onChange={(e) => { setPicked(null); setSearch(e.target.value); }}
-          className="w-full rounded-lg border border-[color:var(--line)] bg-[color:var(--surface)] px-4 py-2.5 text-[15px] text-[color:var(--text)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--violet)]"
+          className="w-full rounded-lg border border-[color:var(--line)] bg-[color:var(--surface)] px-4 py-2.5 text-[15px] text-[color:var(--text)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--violet)] focus:shadow-[0_0_0_3px_rgba(168,85,247,0.15)]"
         />
         {!picked && suggestions.length > 0 && (
-          <div className="mt-1.5 overflow-hidden rounded-lg border border-[color:var(--line)]">
+          <div className="ptr-fade mt-1.5 overflow-hidden rounded-lg border border-[color:var(--line)]">
             {suggestions.map((p) => (
               <div key={p.id} onClick={() => { setPicked(p); setSearch(""); }}
                 className="flex cursor-pointer items-center gap-2.5 px-3 py-2 transition hover:bg-[rgba(168,139,250,0.08)]">
@@ -275,12 +417,12 @@ export default function Portfolio() {
         )}
 
         {picked && (
-          <div className="mt-4">
+          <div className="ptr-fade mt-4">
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Type</div>
             <div className="mb-3 flex flex-wrap gap-2">
               {TIERS.map((t) => (
                 <button key={t.key} onClick={() => setTier(t.key)}
-                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition active:scale-95 ${
                     tier === t.key
                       ? "border border-[color:var(--violet)] bg-[rgba(168,85,247,0.16)] text-[color:var(--lilac)]"
                       : "border border-[color:var(--line)] text-[color:var(--muted)] hover:text-[color:var(--text)]"}`}>
@@ -293,7 +435,7 @@ export default function Portfolio() {
             <div className="mb-4 flex flex-wrap gap-2">
               {POTIONS.map((p) => (
                 <button key={p.key} onClick={() => setPotion(p)}
-                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition active:scale-95 ${
                     potion.key === p.key
                       ? "border border-[color:var(--violet)] bg-[rgba(168,85,247,0.16)] text-[color:var(--lilac)]"
                       : "border border-[color:var(--line)] text-[color:var(--muted)] hover:text-[color:var(--text)]"}`}>
@@ -311,7 +453,7 @@ export default function Portfolio() {
                     aria-label="Decrease quantity"
                     onClick={() => setQuantity(String(Math.max(1, clampQty(quantity) - 1)))}
                     disabled={clampQty(quantity) <= 1}
-                    className="px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.10)] disabled:opacity-40">
+                    className="px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.10)] active:scale-90 disabled:opacity-40">
                     −
                   </button>
                   <input
@@ -331,31 +473,31 @@ export default function Portfolio() {
                     aria-label="Increase quantity"
                     onClick={() => setQuantity(String(Math.min(MAX_QTY, clampQty(quantity) + 1)))}
                     disabled={clampQty(quantity) >= MAX_QTY}
-                    className="px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.10)] disabled:opacity-40">
+                    className="px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.10)] active:scale-90 disabled:opacity-40">
                     +
                   </button>
                 </div>
                 <span className="text-[11px] text-[color:var(--muted)]">max {MAX_QTY}</span>
               </div>
               <button onClick={addToPortfolio} disabled={adding}
-                className="rounded-lg px-5 py-2 text-sm font-semibold text-[#1a1030] transition hover:brightness-110 disabled:opacity-40 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
+                className="rounded-lg px-5 py-2 text-sm font-semibold text-[#1a1030] transition hover:brightness-110 active:scale-95 disabled:opacity-40 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
                 {adding ? "Adding…" : `Add ${picked.name}`}
               </button>
             </div>
-            {addError && <p className="mt-2 text-[13px] text-[color:var(--down)]">{addError}</p>}
+            {addError && <p className="ptr-fade mt-2 text-[13px] text-[color:var(--down)]">{addError}</p>}
           </div>
         )}
       </div>
 
       {/* net worth over time (premium) */}
       {premium ? (
-        <div className="petora-card mb-5 p-5">
+        <div className="petora-card ptr-reveal mb-5 p-5" style={{ animationDelay: "120ms" }}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div className="petora-eyebrow">Net worth over time</div>
             <div className="flex flex-wrap gap-1.5">
               {RANGES.map((r) => (
                 <button key={r.key} onClick={() => setRange(r)}
-                  className={`rounded-lg px-3 py-1 text-xs font-medium transition ${
+                  className={`rounded-lg px-3 py-1 text-xs font-medium transition active:scale-95 ${
                     range.key === r.key
                       ? "border border-[color:var(--violet)] bg-[rgba(168,85,247,0.16)] text-[color:var(--lilac)]"
                       : "border border-[color:var(--line)] text-[color:var(--muted)] hover:text-[color:var(--text)]"}`}>
@@ -364,12 +506,16 @@ export default function Portfolio() {
               ))}
             </div>
           </div>
-          {snapshots.length === 0 ? (
+          {snapshotsLoading ? (
+            <div className="h-[240px]">
+              <Skel className="h-full w-full rounded-lg" />
+            </div>
+          ) : snapshots.length === 0 ? (
             <p className="text-[13px] text-[color:var(--muted)]">No snapshots in this range yet. Try a wider range, or scan to add a data point.</p>
           ) : snapshots.length === 1 ? (
             <p className="text-[13px] text-[color:var(--muted)]">One data point in this range — the line fills in as more snapshots accumulate.</p>
           ) : (
-            <div className="h-[240px]">
+            <div className="ptr-fade h-[240px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={snapshots}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(168,139,250,0.12)" />
@@ -389,58 +535,122 @@ export default function Portfolio() {
           )}
         </div>
       ) : (
-        <div className="petora-card mb-5 p-6 text-center" style={{ borderStyle: "dashed" }}>
+        <div className="petora-card ptr-reveal mb-5 p-6 text-center" style={{ borderStyle: "dashed", animationDelay: "120ms" }}>
           <div className="font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">📈 Net worth over time</div>
           <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-[color:var(--muted)]">See how your account value changes over time with Premium.</p>
-          <button onClick={() => alert("Premium checkout coming soon — Stripe will go here.")}
-            className="mt-4 rounded-full px-6 py-2.5 text-sm font-semibold text-[#1a1030] transition hover:brightness-110 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
+          <a href="/premium"
+            className="mt-4 inline-block rounded-full px-6 py-2.5 text-sm font-semibold text-[#1a1030] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
             Upgrade to Premium
-          </button>
+          </a>
         </div>
       )}
 
       {/* total */}
-      <div className="petora-card mb-5 p-6 text-center">
+      <div className="petora-card ptr-reveal mb-5 p-6 text-center" style={{ animationDelay: "180ms" }}>
         <div className="text-sm text-[color:var(--muted)]">Total portfolio value</div>
-        <div className="petora-gradient mt-1 text-4xl font-bold tabular-nums [font-family:var(--font-data)]">{total.toLocaleString()}</div>
-        <div className="mt-1 text-[13px] text-[color:var(--muted)]">{items.length} pet{items.length !== 1 ? "s" : ""}</div>
+        <div className="petora-gradient mt-1 text-4xl font-bold tabular-nums [font-family:var(--font-data)]">
+          {itemsLoading ? <Skel className="mx-auto h-10 w-40" /> : animatedTotal.toLocaleString()}
+        </div>
+        <div className="mt-1 text-[13px] text-[color:var(--muted)]">
+          {itemsLoading ? "\u00A0" : `${items.length} pet${items.length !== 1 ? "s" : ""}`}
+        </div>
       </div>
 
-      {/* recent value changes in the user's own pets (last 7 days) */}
-      {movers.length > 0 && (
-        <div className="petora-card mb-5 p-5">
-          <div className="petora-eyebrow mb-3">Recent changes in your pets · last 7 days</div>
-          <div className="flex flex-col gap-2.5">
-            {movers.map((m) => {
-              const up = m.change > 0;
-              return (
-                <div key={m.variantId} className="flex items-center gap-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {m.icon_url && <img src={m.icon_url} alt="" className="h-9 w-9 object-contain" />}
+      {/* recent value changes in the user's own pets (last 7 days) — PREMIUM */}
+      {premium ? (
+        moversLoading ? (
+          <div className="petora-card ptr-reveal mb-5 p-5" style={{ animationDelay: "240ms" }}>
+            <div className="petora-eyebrow mb-3">Recent changes in your pets · last 7 days</div>
+            <div className="flex flex-col gap-2.5">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skel className="h-9 w-9 shrink-0 rounded-lg" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-semibold text-[color:var(--text)]">{m.name}</div>
-                    <div className="text-[12px] text-[color:var(--muted)]">{m.variantLabel}</div>
+                    <Skel className="h-4 w-28 max-w-[55%]" />
+                    <Skel className="mt-2 h-3 w-20 max-w-[40%]" />
                   </div>
-                  <div className="text-right tabular-nums [font-family:var(--font-data)]">
-                    <div className="font-bold text-[color:var(--lilac)]">{m.currentValue.toLocaleString()}</div>
-                    <div className="text-[13px] font-bold" style={{ color: up ? "var(--up)" : "var(--down)" }}>
-                      {up ? "▲ +" : "▼ "}{m.change.toLocaleString()}
+                  <Skel className="h-8 w-16" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : movers.length > 0 ? (
+          <div className="petora-card ptr-reveal mb-5 p-5" style={{ animationDelay: "240ms" }}>
+            <div className="petora-eyebrow mb-3">Recent changes in your pets · last 7 days</div>
+            <div className="flex flex-col gap-3">
+              {movers.map((m, idx) => {
+                const up = m.change > 0;
+                const magnitude = maxMove > 0 ? Math.max(0.06, Math.abs(m.change) / maxMove) : 0;
+                return (
+                  <div key={m.variantId} className="ptr-reveal" style={{ animationDelay: `${280 + idx * 50}ms` }}>
+                    <div className="flex items-center gap-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      {m.icon_url && <img src={m.icon_url} alt="" className="h-9 w-9 object-contain" />}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-semibold text-[color:var(--text)]">{m.name}</div>
+                        <div className="text-[12px] text-[color:var(--muted)]">{m.variantLabel}</div>
+                      </div>
+                      <div className="text-right tabular-nums [font-family:var(--font-data)]">
+                        <div className="font-bold text-[color:var(--lilac)]">{m.currentValue.toLocaleString()}</div>
+                        <div className="text-[13px] font-bold" style={{ color: up ? "var(--up)" : "var(--down)" }}>
+                          {up ? "▲ +" : "▼ "}{m.change.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                    {/* magnitude bar — relative size of this move vs the biggest one */}
+                    <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[rgba(168,139,250,0.10)]">
+                      <div
+                        className="ptr-bar h-full rounded-full"
+                        style={{
+                          width: `${magnitude * 100}%`,
+                          background: up ? "var(--up)" : "var(--down)",
+                          opacity: 0.75,
+                          animationDelay: `${340 + idx * 50}ms`,
+                        }}
+                      />
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
+        ) : null
+      ) : (
+        /* locked upsell — mirrors the catalog's LockedMovers pattern */
+        <div className="petora-card ptr-reveal mb-5 p-6 text-center" style={{ borderStyle: "dashed", animationDelay: "240ms" }}>
+          <div className="ptr-lock-icon mx-auto mb-2 w-fit text-2xl" aria-hidden="true">🔒</div>
+          <div className="font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">Rising &amp; dropping pets in your portfolio</div>
+          <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-[color:var(--muted)]">
+            See which of your pets gained or lost value in the last 7 days — before you trade them away.
+          </p>
+          <a href="/premium"
+            className="mt-4 inline-block rounded-full px-6 py-2.5 text-sm font-semibold text-[#1a1030] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
+            Upgrade to Premium
+          </a>
         </div>
       )}
 
       {/* holdings */}
-      {items.length === 0 ? (
-        <p className="text-center text-[color:var(--muted)]">No pets added yet. Search above to add some.</p>
+      {itemsLoading ? (
+        <div className="flex flex-col gap-2.5">
+          <SkelRow />
+          <SkelRow />
+          <SkelRow />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="petora-card ptr-reveal p-8 text-center" style={{ borderStyle: "dashed", animationDelay: "300ms" }}>
+          <div className="mb-1.5 text-2xl" aria-hidden="true">🐾</div>
+          <p className="font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">No pets yet</p>
+          <p className="mx-auto mt-1 max-w-xs text-[13px] text-[color:var(--muted)]">
+            Search above to add pets by hand, or scan your inventory to import them all at once.
+          </p>
+        </div>
       ) : (
         <div className="flex flex-col gap-2.5">
-          {items.map((i) => (
-            <div key={i.rowId} className="petora-card flex items-center gap-3 p-3">
+          {items.map((i, idx) => (
+            <div key={i.rowId}
+              className="petora-card ptr-reveal ptr-lift flex items-center gap-3 p-3"
+              style={{ animationDelay: `${300 + Math.min(idx, 12) * 40}ms` }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               {i.icon_url && <img src={i.icon_url} alt="" className="h-10 w-10 object-contain" />}
               <div className="min-w-0 flex-1">
@@ -452,7 +662,7 @@ export default function Portfolio() {
                 <div className="text-[13px] text-[color:var(--muted)]">×{i.quantity}</div>
               </div>
               <button onClick={() => removeItem(i.rowId)}
-                className="rounded-md border border-[rgba(251,113,133,0.28)] bg-[rgba(251,113,133,0.10)] px-2.5 py-1 text-sm text-[#FCA5B6] transition hover:bg-[rgba(251,113,133,0.18)]" aria-label={`Remove ${i.name}`}>
+                className="rounded-md border border-[rgba(251,113,133,0.28)] bg-[rgba(251,113,133,0.10)] px-2.5 py-1 text-sm text-[#FCA5B6] transition hover:bg-[rgba(251,113,133,0.18)] active:scale-90" aria-label={`Remove ${i.name}`}>
                 ✕
               </button>
             </div>

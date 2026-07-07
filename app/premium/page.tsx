@@ -33,7 +33,7 @@ const FEATURES: { title: string; desc: string; soon?: boolean; icon: ReactNode }
   },
   {
     title: "Rising & falling movers",
-    desc: "Live gainers and losers across the whole catalog, so you always know what to trade for and what to trade away.",
+    desc: "Live gainers and losers across the whole catalog and inside your own portfolio, so you always know what to trade for and what to trade away.",
     icon: (
       <>
         <path d="M5 11l4-4 4 4M9 7v9" />
