@@ -36,21 +36,33 @@ export async function POST(req: Request) {
   }
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL!;
-  const priceId = plan === 'monthly'
+  const isMonthly = plan === 'monthly';
+  const priceId = isMonthly
     ? process.env.STRIPE_PRICE_MONTHLY!
     : process.env.STRIPE_PRICE_LIFETIME!;
 
   try {
     const session = await stripe.checkout.sessions.create({
-      mode: plan === 'monthly' ? 'subscription' : 'payment',
+      mode: isMonthly ? 'subscription' : 'payment',
       line_items: [{ price: priceId, quantity: 1 }],
+
       // Ties the completed session back to this user in the webhook —
       // do NOT rely on customer email matching instead of this.
       client_reference_id: user.id,
+
+      // Reuse an existing customer if we have one; otherwise let Stripe make one.
       customer: profile.stripe_customer_id ?? undefined,
       customer_email: profile.stripe_customer_id ? undefined : user.email ?? undefined,
-      success_url: `${siteUrl}/premium?checkout=success`,
-      cancel_url: `${siteUrl}/premium?checkout=cancelled`,
+
+      // FIX: for one-time ('payment') mode Stripe does NOT create a Customer by
+      // default, which left lifetime buyers with no stripe_customer_id and a
+      // broken "Manage billing" link. Force a Customer for the payment path so
+      // every buyer is reachable in the billing portal / webhook. (Subscription
+      // mode always creates a Customer, so this option only applies to payment.)
+      ...(isMonthly ? {} : { customer_creation: 'always' as const }),
+
+      success_url: `${siteUrl}/premium/success`,
+      cancel_url: `${siteUrl}/premium/cancelled`,
       metadata: { user_id: user.id, plan },
     });
 

@@ -9,6 +9,13 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 type Pet = { id: number; name: string; rarity: string | null; icon_url: string | null; value: number | null };
 type Mover = { pet_id: number; name: string; icon_url: string | null; current_value: number; change: number };
 
+// Graph access resolves per selected pet:
+// pending      → still figuring out who's logged in
+// allowed      → premium, or a free user within (or re-viewing) today's quota
+// locked-auth  → not logged in (graphs require an account)
+// locked-limit → free user, out of free graphs today
+type GraphAccess = "pending" | "allowed" | "locked-auth" | "locked-limit";
+
 const TIERS = [
   { key: "normal", label: "Normal" },
   { key: "neon",   label: "Neon" },
@@ -42,23 +49,44 @@ const RARITIES = [
 const normRarity = (r: string | null) => (r ?? "").toLowerCase().replace(/[^a-z]/g, "");
 const rarityMeta = (r: string | null) => RARITIES.find((x) => x.key === normRarity(r)) ?? null;
 
-// Free users get 3 unique-pet graphs per day (client-side; works logged-out too).
+// Free LOGGED-IN users get 3 unique-pet graphs per day. Logged-out visitors get
+// none (they can browse the grid, but graphs require an account). The counter is
+// keyed per user id so switching accounts doesn't share or reset another
+// account's quota. Still client-side/localStorage — a determined user can clear
+// it, but there's now an account wall in front of it; server-enforce later if
+// abuse shows up (§9 of the handoff).
 const FREE_GRAPHS_PER_DAY = 3;
-const FREE_KEY = "petora_free_graphs";
+const freeKeyFor = (uid: string) => `petora_free_graphs_${uid}`;
 const today = () => new Date().toISOString().slice(0, 10);
 
-function loadFreeGraphs(): number[] {
+function loadFreeGraphs(uid: string): number[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(FREE_KEY) || "null");
+    const raw = JSON.parse(localStorage.getItem(freeKeyFor(uid)) || "null");
     if (raw && raw.date === today() && Array.isArray(raw.ids)) return raw.ids;
   } catch {}
   return [];
 }
-function saveFreeGraphs(ids: number[]) {
-  try { localStorage.setItem(FREE_KEY, JSON.stringify({ date: today(), ids })); } catch {}
+function saveFreeGraphs(uid: string, ids: number[]) {
+  try { localStorage.setItem(freeKeyFor(uid), JSON.stringify({ date: today(), ids })); } catch {}
 }
 
 const fmt = (n: number) => n.toLocaleString();
+
+function Sparkle({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M12 2 13.8 10.2 22 12 13.8 13.8 12 22 10.2 13.8 2 12 10.2 10.2Z" />
+    </svg>
+  );
+}
+
+function LockIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  );
+}
 
 // Shimmering placeholder bar for loading states.
 function Skel({ className = "" }: { className?: string }) {
@@ -77,9 +105,34 @@ function SkelCard({ delay }: { delay: number }) {
   );
 }
 
+// The 3 quota pips — remaining ones glow violet, used ones dim out.
+// `compact` renders a smaller version for the modal header.
+function QuotaPips({ used, compact = false }: { used: number; compact?: boolean }) {
+  const size = compact ? "h-2 w-2" : "h-2.5 w-2.5";
+  return (
+    <span className="inline-flex items-center gap-1" aria-label={`${Math.max(0, FREE_GRAPHS_PER_DAY - used)} of ${FREE_GRAPHS_PER_DAY} free graphs left today`}>
+      {Array.from({ length: FREE_GRAPHS_PER_DAY }).map((_, i) => {
+        const spent = i < used;
+        return (
+          <span
+            key={i}
+            className={`ptrm-pip ${size} rounded-full transition-all duration-300`}
+            style={
+              spent
+                ? { background: "rgba(168,139,250,0.18)", border: "1px solid var(--line-2)" }
+                : { background: "var(--violet)", boxShadow: "0 0 8px rgba(168,85,247,0.75)" }
+            }
+          />
+        );
+      })}
+    </span>
+  );
+}
+
 export default function Catalog() {
+  const [userId, setUserId] = useState<string | null>(null);
   const [premium, setPremium] = useState(false);
-  const [premiumChecked, setPremiumChecked] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [pets, setPets] = useState<Pet[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,22 +152,29 @@ export default function Catalog() {
   const [graphLoading, setGraphLoading] = useState(false);
 
   const [freeGraphIds, setFreeGraphIds] = useState<number[]>([]);
-  const [graphAllowed, setGraphAllowed] = useState(true);
+  const [access, setAccess] = useState<GraphAccess>("pending");
 
-  const remainingFree = Math.max(0, FREE_GRAPHS_PER_DAY - freeGraphIds.length);
-
-  useEffect(() => { setFreeGraphIds(loadFreeGraphs()); }, []);
+  const usedFree = Math.min(FREE_GRAPHS_PER_DAY, freeGraphIds.length);
+  const remainingFree = Math.max(0, FREE_GRAPHS_PER_DAY - usedFree);
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
-      if (data.user) {
+      const uid = data.user?.id ?? null;
+      setUserId(uid);
+      if (uid) {
         const { data: prof } = await supabase
-          .from("profiles").select("is_premium").eq("id", data.user.id).single();
+          .from("profiles").select("is_premium").eq("id", uid).single();
         setPremium(prof?.is_premium ?? false);
       }
-      setPremiumChecked(true);
+      setAuthChecked(true);
     });
   }, []);
+
+  // Load today's quota usage as soon as we know who this is, so the meter is
+  // accurate before any pet is opened.
+  useEffect(() => {
+    if (userId) setFreeGraphIds(loadFreeGraphs(userId));
+  }, [userId]);
 
   useEffect(() => {
     async function load() {
@@ -146,8 +206,35 @@ export default function Catalog() {
     });
   }, []);
 
+  // Resolve graph access for the selected pet. Runs reactively so a pet opened
+  // before auth finishes resolving is re-evaluated the moment it does — the old
+  // imperative check had a race where an early click was allowed for free
+  // without ever being counted. A free view is consumed exactly once per unique
+  // pet per day, at the moment access is granted.
   useEffect(() => {
-    if (!selected || !graphAllowed) return;
+    if (!selected) return;
+    if (!authChecked) { setAccess("pending"); return; }
+    if (!userId) { setAccess("locked-auth"); return; }
+    if (premium) { setAccess("allowed"); return; }
+    const ids = loadFreeGraphs(userId);
+    if (ids.includes(selected.id)) {
+      setFreeGraphIds(ids);
+      setAccess("allowed");
+      return;
+    }
+    if (ids.length < FREE_GRAPHS_PER_DAY) {
+      const next = [...ids, selected.id];
+      saveFreeGraphs(userId, next);
+      setFreeGraphIds(next);
+      setAccess("allowed");
+    } else {
+      setFreeGraphIds(ids);
+      setAccess("locked-limit");
+    }
+  }, [selected, authChecked, userId, premium]);
+
+  useEffect(() => {
+    if (!selected || access !== "allowed") return;
     const pet = selected;
     async function loadHistory() {
       setGraphLoading(true);
@@ -169,7 +256,7 @@ export default function Catalog() {
       setGraphLoading(false);
     }
     loadHistory();
-  }, [selected, tier, potion, range, graphAllowed]);
+  }, [selected, tier, potion, range, access]);
 
   // modal open: lock body scroll + close on Escape
   useEffect(() => {
@@ -197,29 +284,13 @@ export default function Catalog() {
   const rising = movers.filter((m) => m.change > 0).sort((a, b) => b.change - a.change);
   const falling = movers.filter((m) => m.change < 0).sort((a, b) => a.change - b.change);
 
-  function resolveGraphAccess(petId: number) {
-    if (!premiumChecked) { setGraphAllowed(true); return; }
-    if (premium) { setGraphAllowed(true); return; }
-    const ids = loadFreeGraphs();
-    if (ids.includes(petId)) { setGraphAllowed(true); return; }
-    if (ids.length < FREE_GRAPHS_PER_DAY) {
-      const next = [...ids, petId];
-      saveFreeGraphs(next);
-      setFreeGraphIds(next);
-      setGraphAllowed(true);
-    } else {
-      setFreeGraphIds(ids);
-      setGraphAllowed(false);
-    }
-  }
-
   function openPet(pet: Pet) {
     setSelected(pet);
     setTier(DEFAULT_TIER);
     setPotion(DEFAULT_POTION);
     setRange(RANGES[2]);
     setHistory([]);
-    resolveGraphAccess(pet.id);
+    setAccess("pending"); // resolved by the access effect
   }
 
   function openMover(m: Mover) {
@@ -236,13 +307,68 @@ export default function Catalog() {
       }`}
     >
       {label}
-      {locked && (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
-          <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
-        </svg>
-      )}
+      {locked && <LockIcon />}
     </button>
   );
+
+  // The always-visible graph-access strip under the header — every visitor sees
+  // exactly what their plan gets them.
+  function AccessStrip() {
+    if (!authChecked) {
+      return <Skel className="mt-4 h-[52px] w-full rounded-xl" />;
+    }
+    if (!userId) {
+      return (
+        <div className="petora-card ptrm-reveal mt-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3" style={{ borderColor: "var(--line-2)" }}>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="grid h-8 w-8 flex-none place-items-center rounded-lg text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.10)", border: "1px solid var(--line-2)" }}>
+              <LockIcon size={15} />
+            </span>
+            <p className="text-[13.5px] text-[color:var(--muted)]">
+              <span className="font-semibold text-[color:var(--text)]">Value graphs need a free account</span>
+              {" "}— log in to unlock {FREE_GRAPHS_PER_DAY} pet graphs a day.
+            </p>
+          </div>
+          <div className="flex flex-none items-center gap-2">
+            <Link href="/login" className="rounded-full px-4 py-1.5 text-[13px] font-semibold text-[#1a1030] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
+              Log in
+            </Link>
+            <Link href="/signup" className="rounded-full border border-[color:var(--line-2)] px-4 py-1.5 text-[13px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-95">
+              Sign up free
+            </Link>
+          </div>
+        </div>
+      );
+    }
+    if (premium) {
+      return (
+        <div className="ptrm-reveal mt-4 inline-flex items-center gap-2 rounded-full border border-[color:var(--line-2)] bg-[rgba(168,139,250,0.07)] px-4 py-2">
+          <Sparkle className="ptrm-pulse h-3.5 w-3.5 text-[color:var(--lilac)]" />
+          <span className="text-[13px] font-semibold text-[color:var(--text)]">
+            Premium — <span className="ptrm-shimmer">unlimited graphs</span> on every pet &amp; variant
+          </span>
+        </div>
+      );
+    }
+    return (
+      <div className="petora-card ptrm-reveal mt-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3" style={{ borderColor: "var(--line-2)" }}>
+        <div className="flex min-w-0 items-center gap-3">
+          <QuotaPips used={usedFree} />
+          <p className="text-[13.5px] text-[color:var(--muted)]">
+            <span className="font-semibold text-[color:var(--text)]">
+              {remainingFree > 0
+                ? `${remainingFree} of ${FREE_GRAPHS_PER_DAY} free graphs left today`
+                : "Free graphs used up for today"}
+            </span>
+            {remainingFree > 0 ? " — each new pet you open uses one." : " — quota resets at midnight."}
+          </p>
+        </div>
+        <Link href="/premium" className="flex-none rounded-full px-4 py-1.5 text-[13px] font-semibold text-[#1a1030] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
+          Go unlimited
+        </Link>
+      </div>
+    );
+  }
 
   function MoverList({ list, up }: { list: Mover[]; up: boolean }) {
     if (list.length === 0) {
@@ -331,9 +457,7 @@ export default function Catalog() {
           </svg>
         </div>
         <span className="ptrm-float relative mx-auto grid h-12 w-12 place-items-center rounded-xl text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.10)", border: "1px solid var(--line-2)" }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
-          </svg>
+          <LockIcon size={22} />
         </span>
         <h2 className="relative mt-5 text-xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">
           Rising &amp; Falling is a Premium feature
@@ -351,6 +475,7 @@ export default function Catalog() {
     );
   }
 
+  // Free user out of graphs for today.
   function LockedGraph() {
     return (
       <div className="relative grid h-full place-items-center overflow-hidden rounded-xl border border-[color:var(--line)]">
@@ -361,13 +486,14 @@ export default function Catalog() {
         </div>
         <div className="relative px-6 text-center">
           <span className="ptrm-float mx-auto grid h-11 w-11 place-items-center rounded-xl text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.10)", border: "1px solid var(--line-2)" }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
-            </svg>
+            <LockIcon size={20} />
           </span>
-          <p className="mt-3 font-semibold text-[color:var(--text)]">You&apos;ve used your {FREE_GRAPHS_PER_DAY} free graphs today</p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <QuotaPips used={FREE_GRAPHS_PER_DAY} compact />
+            <p className="font-semibold text-[color:var(--text)]">All {FREE_GRAPHS_PER_DAY} free graphs used today</p>
+          </div>
           <p className="mx-auto mt-1 max-w-xs text-[13px] text-[color:var(--muted)]">
-            Premium unlocks unlimited value history on every pet and variant.
+            Your quota resets at midnight — or go Premium for unlimited value history on every pet and variant.
           </p>
           <Link
             href="/premium"
@@ -375,6 +501,42 @@ export default function Catalog() {
           >
             Upgrade for unlimited graphs
           </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Not logged in — graphs live behind a free account.
+  function LockedGraphAuth() {
+    return (
+      <div className="relative grid h-full place-items-center overflow-hidden rounded-xl border border-[color:var(--line)]">
+        <div className="pointer-events-none absolute inset-0 opacity-20 blur-[2px]" aria-hidden="true">
+          <svg viewBox="0 0 400 120" preserveAspectRatio="none" className="h-full w-full">
+            <path className="ptrm-draw" d="M0,86 L50,80 L100,84 L150,62 L200,70 L250,44 L300,52 L350,28 L400,18" fill="none" stroke="#A855F7" strokeWidth="2.5" pathLength={1} />
+          </svg>
+        </div>
+        <div className="relative px-6 text-center">
+          <span className="ptrm-float mx-auto grid h-11 w-11 place-items-center rounded-xl text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.10)", border: "1px solid var(--line-2)" }}>
+            <LockIcon size={20} />
+          </span>
+          <p className="mt-3 font-semibold text-[color:var(--text)]">Log in to see this pet&apos;s value history</p>
+          <p className="mx-auto mt-1 max-w-xs text-[13px] text-[color:var(--muted)]">
+            A free account unlocks {FREE_GRAPHS_PER_DAY} pet graphs a day. Premium makes it unlimited.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            <Link
+              href="/login"
+              className="rounded-full px-6 py-2.5 text-[14px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+            >
+              Log in
+            </Link>
+            <Link
+              href="/signup"
+              className="rounded-full border border-[color:var(--line-2)] px-5 py-2.5 text-[14px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-95"
+            >
+              Sign up free
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -394,6 +556,8 @@ export default function Catalog() {
         @keyframes ptrmFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
         @keyframes ptrmPulse { 0%,100%{opacity:1; transform:scale(1)} 50%{opacity:0.55; transform:scale(0.8)} }
         @keyframes ptrmDraw { from{stroke-dashoffset:1} to{stroke-dashoffset:0} }
+        @keyframes ptrmShimmerText { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
+        @keyframes ptrmPipPop { 0%{transform:scale(1)} 50%{transform:scale(1.5)} 100%{transform:scale(1)} }
         .ptrm-row { opacity:0; animation: ptrmFade .4s ease forwards; }
         .ptrm-reveal { opacity:0; animation: ptrmFade .45s cubic-bezier(.22,1,.36,1) forwards; }
         .ptrm-bar { animation: ptrmBar .8s cubic-bezier(.2,.7,.2,1) both; }
@@ -410,6 +574,12 @@ export default function Catalog() {
         .ptrm-float { animation: ptrmFloat 2.8s ease-in-out infinite; }
         .ptrm-pulse { animation: ptrmPulse 1.8s ease-in-out infinite; }
         .ptrm-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: ptrmDraw 1.6s ease-out .2s both; }
+        .ptrm-shimmer {
+          background: linear-gradient(100deg,#A855F7,#C4B5FD,#FFFFFF,#C4B5FD,#A855F7);
+          background-size:200% auto; -webkit-background-clip:text; background-clip:text;
+          color:transparent; animation: ptrmShimmerText 6s linear infinite;
+        }
+        .ptrm-pip { animation: ptrmPipPop .35s ease-out; }
         .ptrm-card-hover {
           transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease;
         }
@@ -419,11 +589,12 @@ export default function Catalog() {
         }
         @media (prefers-reduced-motion: reduce) {
           .ptrm-row, .ptrm-reveal, .ptrm-bar, .ptrm-backdrop, .ptrm-modal,
-          .ptrm-float, .ptrm-pulse, .ptrm-draw {
+          .ptrm-float, .ptrm-pulse, .ptrm-draw, .ptrm-pip {
             animation:none!important; opacity:1!important; transform:none!important;
             stroke-dashoffset:0!important;
           }
           .ptrm-skel { animation:none!important; }
+          .ptrm-shimmer { animation:none!important; color:var(--lilac)!important; }
           .ptrm-card-hover, .ptrm-card-hover:hover { transition:none!important; transform:none!important; }
         }
       `}</style>
@@ -434,16 +605,10 @@ export default function Catalog() {
         <p className="mt-2 text-sm text-[color:var(--muted)]">
           {loading ? "Loading pets" : `${filtered.length} pets`} &middot; tap one to see its value history
         </p>
-
-        {premiumChecked && !premium && (
-          <p className="mt-2 text-[13px] text-[color:var(--muted)]">
-            Free plan: {remainingFree} of {FREE_GRAPHS_PER_DAY} pet graphs left today.{" "}
-            <Link href="/premium" className="font-semibold text-[color:var(--lilac)] hover:underline">
-              Go Premium for unlimited graphs + Rising / Falling &rarr;
-            </Link>
-          </p>
-        )}
       </div>
+
+      {/* graph access strip — always tells the visitor what their plan gets */}
+      <AccessStrip />
 
       <div className="ptrm-reveal mt-6 mb-5 inline-flex rounded-[10px] bg-[rgba(168,139,250,0.07)] p-1" style={{ animationDelay: "60ms" }}>
         {tabBtn("all", "All pets", false)}
@@ -569,7 +734,7 @@ export default function Catalog() {
 
       {tab === "rising" && (
         <div key="rising" className="ptrm-reveal">
-          {!premiumChecked ? (
+          {!authChecked ? (
             <div className="petora-card p-5">
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="flex items-center gap-3 py-2.5">
@@ -587,7 +752,7 @@ export default function Catalog() {
       )}
       {tab === "falling" && (
         <div key="falling" className="ptrm-reveal">
-          {!premiumChecked ? (
+          {!authChecked ? (
             <div className="petora-card p-5">
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="flex items-center gap-3 py-2.5">
@@ -622,10 +787,19 @@ export default function Catalog() {
               {selected.icon_url && <img src={selected.icon_url} alt={selected.name} className="h-12 w-12 object-contain" />}
               <div className="min-w-0 flex-1">
                 <h2 className="m-0 truncate text-xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">{selected.name}</h2>
-                {premiumChecked && !premium && (
-                  <p className="text-xs text-[color:var(--muted)]">
-                    {graphAllowed ? `Free graph \u00B7 ${remainingFree} left today` : "Free graph limit reached today"}
-                  </p>
+                {authChecked && (
+                  premium ? (
+                    <p className="flex items-center gap-1 text-xs text-[color:var(--muted)]">
+                      <Sparkle className="h-2.5 w-2.5 text-[color:var(--lilac)]" /> Premium · unlimited graphs
+                    </p>
+                  ) : !userId ? (
+                    <p className="text-xs text-[color:var(--muted)]">Graphs require a free account</p>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-xs text-[color:var(--muted)]">
+                      <QuotaPips used={usedFree} compact />
+                      {access === "locked-limit" ? "Free graph limit reached today" : `${remainingFree} free graph${remainingFree === 1 ? "" : "s"} left today`}
+                    </span>
+                  )
                 )}
               </div>
               <button
@@ -688,7 +862,11 @@ export default function Catalog() {
             </div>
 
             <div className="h-[280px]">
-              {!graphAllowed ? (
+              {access === "pending" ? (
+                <Skel className="h-full w-full rounded-xl" />
+              ) : access === "locked-auth" ? (
+                <LockedGraphAuth />
+              ) : access === "locked-limit" ? (
                 <LockedGraph />
               ) : graphLoading ? (
                 <Skel className="h-full w-full rounded-xl" />
