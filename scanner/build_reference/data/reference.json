@@ -5980,5 +5980,23 @@
     "colorhash": "06006000041",
     "norm_path": "data\\icons_norm\\240_board.png",
     "source": "board"
+  },
+  {
+    "id": 239,
+    "name": "Golden Penguin",
+    "rarity": "legendary",
+    "phash": "b4b3c6cbd131916c",
+    "colorhash": "07e00208000",
+    "norm_path": "data\\icons_norm\\239_board.png",
+    "source": "board"
+  },
+  {
+    "id": 247,
+    "name": "Cuddly Candle",
+    "rarity": "legendary",
+    "phash": "f08dc639154e917b",
+    "colorhash": "07400201001",
+    "norm_path": "data\\icons_norm\\247_board.png",
+    "source": "board"
   }
 ]
