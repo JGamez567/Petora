@@ -24,12 +24,11 @@ export const DEFAULT_GRADIENT = "linear-gradient(135deg,#3a2b66,#6d52c4)";
 // Placeholder entries — replace with your real filenames. Each needs a
 // matching image in public/avatars/ or it renders as the default circle.
 export const AVATARS: AvatarPreset[] = [
-  { id: "Petora1", label: "Unicorn" },
-  { id: "avatar2", label: "Avatar 2" },
-  { id: "avatar3", label: "Avatar 3" },
-  { id: "avatar4", label: "Avatar 4" },
-  { id: "avatar5", label: "Avatar 5" },
-  { id: "avatar6", label: "Avatar 6" },
+  { id: "petora1", label: "unicorn" },
+  { id: "petora2", label: "giantpanda" },
+  { id: "petora3", label: "giraffe" },
+  { id: "petora4", label: "cow" },
+  { id: "petora5", label: "kangaroo" },
 ];
 // ─────────────────────────────────────────────────────────────────────────────
 
