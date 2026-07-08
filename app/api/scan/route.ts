@@ -83,10 +83,36 @@ function windowedDistance(candidate: string, expected: string): number {
   return best;
 }
 
+// Like windowedDistance() but also reports how many candidate chars fall OUTSIDE
+// the best-matching window, split into [left, right]. Lets usernameMatches() reason
+// about edge junk (avatar / button glyphs OCR'd next to the name).
+// Returns [distance, junkLeft, junkRight]. MUST mirror _windowed_match() in common.py.
+function windowedMatch(candidate: string, expected: string): [number, number, number] {
+  const c = candidate.toLowerCase();
+  const e = expected.toLowerCase();
+  if (c.length < e.length) return [levenshtein(c, e), 0, 0];
+  let best = Infinity;
+  let bi = 0;
+  for (let i = 0; i + e.length <= c.length; i++) {
+    const d = levenshtein(c.slice(i, i + e.length), e);
+    if (d < best) { best = d; bi = i; }
+    if (best === 0) break;
+  }
+  return [best, bi, c.length - e.length - bi];
+}
+
 // The matched username must make up at least this fraction of the OCR token for the
 // windowed (junk-trimming) path to apply. Stops a short name from matching as a
 // substring buried inside a longer, unrelated username. Tune up to be stricter.
 const WINDOW_COVERAGE = 0.7;
+// Edge-junk path: a name at least this long, flanked by at most EDGE_JUNK_PER_SIDE
+// OCR chars on each side, still matches even below WINDOW_COVERAGE. Models fixed UI
+// chrome (avatar thumbnail + back/close buttons) glued onto a SHORT username, which
+// the fractional guard alone rejects. MUST mirror the _GATE_EDGE_JUNK_* constants in
+// common.py. Kept strict (min length 6, 2 chars/side) so a short name still cannot
+// match as an interior substring of an unrelated, longer username.
+const EDGE_JUNK_MIN_LEN = 6;
+const EDGE_JUNK_PER_SIDE = 2;
 
 // FIX: now accepts a list of candidates (Python returns multiple OCR attempts).
 // Returns true if ANY candidate matches the expected username.
@@ -99,11 +125,18 @@ function usernameMatches(detected: string[] | string | null, expected: string): 
     const d = raw.toLowerCase();
     // 1) Direct tolerant match — clean reads and a single OCR character slip.
     if (levenshtein(d, e) <= 1) return true;
-    // 2) Windowed match — tolerate junk glued to the front/back of the real
-    //    username, but ONLY when the username makes up most of the token, so a
-    //    short name can't match as a substring of an unrelated, longer name.
-    if (d.length >= e.length && e.length >= WINDOW_COVERAGE * d.length) {
-      return windowedDistance(d, e) <= 1;
+    if (d.length >= e.length) {
+      const [dist, jl, jr] = windowedMatch(d, e);
+      if (dist <= 1) {
+        // 2) Windowed match — the username makes up most of the token, so a short
+        //    name can't match as a substring of an unrelated, longer name.
+        if (e.length >= WINDOW_COVERAGE * d.length) return true;
+        // 3) Bounded edge-junk — a long-enough name flanked by only a couple of
+        //    OCR chars per side (fixed UI chrome), not buried inside another name.
+        if (e.length >= EDGE_JUNK_MIN_LEN && jl <= EDGE_JUNK_PER_SIDE && jr <= EDGE_JUNK_PER_SIDE) {
+          return true;
+        }
+      }
     }
     return false;
   });

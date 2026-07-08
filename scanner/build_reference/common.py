@@ -714,7 +714,29 @@ def _windowed_distance(candidate, expected):
     return best if best is not None else _levenshtein(c, e)
 
 
-_GATE_WINDOW_COVERAGE = 0.7  # must match WINDOW_COVERAGE in route.ts
+def _windowed_match(candidate, expected):
+    """Like _windowed_distance() but also returns how many candidate chars fall
+    OUTSIDE the best-matching window, split into (left, right). Lets gate_match()
+    reason about edge junk (avatar / button glyphs OCR'd next to the name).
+    Returns (distance, junk_left, junk_right). Mirrors windowedMatch() in route.ts."""
+    c = candidate.lower()
+    e = expected.lower()
+    if len(c) < len(e):
+        return _levenshtein(c, e), 0, 0
+    best = None
+    bi = 0
+    for i in range(0, len(c) - len(e) + 1):
+        d = _levenshtein(c[i:i + len(e)], e)
+        if best is None or d < best:
+            best, bi = d, i
+        if best == 0:
+            break
+    return best, bi, len(c) - len(e) - bi
+
+
+_GATE_WINDOW_COVERAGE = 0.7   # must match WINDOW_COVERAGE in route.ts
+_GATE_EDGE_JUNK_MIN_LEN = 6   # must match EDGE_JUNK_MIN_LEN in route.ts
+_GATE_EDGE_JUNK_PER_SIDE = 2  # must match EDGE_JUNK_PER_SIDE in route.ts
 
 
 def gate_match(candidate, expected):
@@ -729,11 +751,20 @@ def gate_match(candidate, expected):
     # 1) direct tolerant match — clean reads / a single OCR slip
     if _levenshtein(d, e) <= 1:
         return True
-    # 2) windowed match — tolerate junk on the front/back, but only when the
-    #    expected name makes up most of the token (so a short name can't match as a
-    #    substring of an unrelated, longer username).
-    if len(d) >= len(e) and len(e) >= _GATE_WINDOW_COVERAGE * len(d):
-        return _windowed_distance(d, e) <= 1
+    if len(d) >= len(e):
+        dist, jl, jr = _windowed_match(d, e)
+        if dist <= 1:
+            # 2) windowed match — the expected name makes up most of the token
+            #    (a short name can't match as a substring of a longer username).
+            if len(e) >= _GATE_WINDOW_COVERAGE * len(d):
+                return True
+            # 3) bounded edge-junk — the name is long enough AND is flanked by only
+            #    a couple of OCR chars on each side (fixed UI chrome like the avatar
+            #    thumbnail / back+close buttons), not buried inside another name.
+            if (len(e) >= _GATE_EDGE_JUNK_MIN_LEN
+                    and jl <= _GATE_EDGE_JUNK_PER_SIDE
+                    and jr <= _GATE_EDGE_JUNK_PER_SIDE):
+                return True
     return False
 
 
