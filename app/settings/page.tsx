@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-
+import Link from "next/link";
 
 export default async function SettingsPage({
   searchParams,
@@ -47,7 +47,9 @@ export default async function SettingsPage({
   return (
     <main className="mx-auto max-w-lg px-6 py-10">
       <p className="petora-eyebrow">Account</p>
-      <h1 className="mt-1.5 text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">Roblox verification</h1>
+      <h1 className="mt-1.5 text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">
+        Settings
+      </h1>
 
       {roblox && (
         <p className={`mt-5 rounded-lg px-3.5 py-2.5 text-sm ${bannerCls}`}>
@@ -55,7 +57,11 @@ export default async function SettingsPage({
         </p>
       )}
 
-      <div className="petora-card mt-5 p-6" style={{ borderColor: "var(--line-2)" }}>
+      {/* ── Roblox verification ─────────────────────────────────────────── */}
+      <h2 className="mt-7 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+        Roblox verification
+      </h2>
+      <div className="petora-card mt-2 p-6" style={{ borderColor: "var(--line-2)" }}>
         {!user ? (
           <div className="space-y-4">
             <p className="text-sm text-[color:var(--muted)]">Please sign in to verify your Roblox account.</p>
@@ -85,6 +91,23 @@ export default async function SettingsPage({
           </div>
         )}
       </div>
+
+      {/* ── Profile avatar (lives on /profile now) ──────────────────────── */}
+      <h2 className="mt-7 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+        Profile
+      </h2>
+      <Link
+        href="/profile"
+        className="petora-card mt-2 flex items-center justify-between gap-4 p-5 transition hover:border-[color:var(--line-2)] hover:bg-[rgba(168,139,250,0.05)]"
+      >
+        <div className="min-w-0">
+          <p className="font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">Profile avatar</p>
+          <p className="mt-0.5 text-[13px] text-[color:var(--muted)]">
+            Choose the picture shown next to your name on the leaderboard.
+          </p>
+        </div>
+        <span className="flex-none text-[color:var(--lilac)]" aria-hidden="true">→</span>
+      </Link>
     </main>
   );
 }

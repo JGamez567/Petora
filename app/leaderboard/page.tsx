@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { AvatarCircle } from "@/lib/avatars";
 
 type Row = {
   rank: number;
@@ -74,6 +75,10 @@ export default function Leaderboard() {
   const [isPublic, setIsPublic] = useState(false);
   const [verified, setVerified] = useState(false);
 
+  // avatar_id per user_id, resolved via get_public_avatars (profiles isn't
+  // publicly readable; this RPC only exposes avatars of public traders)
+  const [avatars, setAvatars] = useState<Record<string, string | null>>({});
+
   // user-pets modal
   const [openUser, setOpenUser] = useState<Row | null>(null);
   const [pets, setPets] = useState<SubPet[] | null>(null);
@@ -96,14 +101,27 @@ export default function Leaderboard() {
     setLoading(true);
     const { data, error } = await supabase.rpc("get_leaderboard", { limit_count: 100 });
     if (error) console.error(error);
-    setRows((data ?? []).map((r: any) => ({
+    const mapped: Row[] = (data ?? []).map((r: any) => ({
       rank: Number(r.rank),
       user_id: r.user_id,
       username: r.username,
       total_value: Number(r.total_value),
       is_premium: !!r.is_premium,
-    })));
+    }));
+    setRows(mapped);
     setLoading(false);
+
+    // resolve avatars for everyone on the board (non-blocking; default circles
+    // render until this lands)
+    if (mapped.length > 0) {
+      const { data: av, error: avErr } = await supabase.rpc("get_public_avatars", {
+        p_user_ids: mapped.map((r) => r.user_id),
+      });
+      if (avErr) { console.error(avErr); return; }
+      const next: Record<string, string | null> = {};
+      (av ?? []).forEach((a: any) => { next[a.user_id] = a.avatar_id ?? null; });
+      setAvatars(next);
+    }
   }
 
   useEffect(() => { loadBoard(); }, []);
@@ -173,19 +191,30 @@ export default function Leaderboard() {
         {first && (
           <Sparkle className="ptrb-twinkle absolute -top-2.5 left-1/2 h-5 w-5 -translate-x-1/2 text-[color:var(--lilac)]" />
         )}
-        <span
-          className={`relative flex-none rounded-full [background-image:linear-gradient(135deg,#3a2b66,#6d52c4)] ${
-            first ? "h-14 w-14 ring-2 ring-[color:var(--violet)] ring-offset-2 ring-offset-[color:var(--surface)]" : "h-11 w-11"
-          }`}
-        />
-        <span
-          className={`-mt-2.5 grid place-items-center rounded-full text-[12px] font-bold text-[#1a1030] shadow-[0_0_14px_rgba(168,85,247,0.55)] [background-image:var(--ramp)] [font-family:var(--font-data)] ${
-            first ? "h-6 w-6" : "h-5 w-5"
-          }`}
-        >
-          {r.rank}
+
+        {/* avatar with the rank medal pinned BELOW it on its own layer — the
+            medal sits half-overlapping the avatar's bottom edge, z-raised and
+            outlined so the number is always fully readable */}
+        <span className="relative mb-3">
+          <AvatarCircle
+            avatarId={avatars[r.user_id]}
+            className={
+              first
+                ? "h-14 w-14 ring-2 ring-[color:var(--violet)] ring-offset-2 ring-offset-[color:var(--surface)]"
+                : "h-11 w-11"
+            }
+            fontSize={first ? 26 : 20}
+          />
+          <span
+            className={`absolute left-1/2 z-10 grid -translate-x-1/2 place-items-center rounded-full border-2 border-[color:var(--surface)] text-[12px] font-bold text-[#1a1030] shadow-[0_0_14px_rgba(168,85,247,0.55)] [background-image:var(--ramp)] [font-family:var(--font-data)] ${
+              first ? "-bottom-2.5 h-6 w-6" : "-bottom-2 h-5 w-5"
+            }`}
+          >
+            {r.rank}
+          </span>
         </span>
-        <span className="mt-2 flex max-w-full items-center gap-1 px-1">
+
+        <span className="mt-1 flex max-w-full items-center gap-1 px-1">
           <span className={`truncate font-semibold text-[color:var(--text)] ${first ? "text-[15px]" : "text-[13.5px]"}`}>
             {r.username}
           </span>
@@ -368,7 +397,7 @@ export default function Leaderboard() {
                     )}
 
                     <div className="flex min-w-0 items-center gap-3">
-                      <span className="h-7 w-7 flex-none rounded-full [background-image:linear-gradient(135deg,#3a2b66,#6d52c4)]" />
+                      <AvatarCircle avatarId={avatars[r.user_id]} className="h-7 w-7" fontSize={14} />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className="truncate text-[14.5px] font-semibold text-[color:var(--text)]">{r.username}</span>
@@ -410,7 +439,7 @@ export default function Leaderboard() {
             style={{ borderColor: "var(--line-2)", boxShadow: "0 30px 80px -30px rgba(124,58,237,0.6)" }}
           >
             <div className="mb-4 flex items-center gap-3">
-              <span className="h-10 w-10 flex-none rounded-full [background-image:linear-gradient(135deg,#3a2b66,#6d52c4)]" />
+              <AvatarCircle avatarId={avatars[openUser.user_id]} className="h-10 w-10" fontSize={18} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <h2 className="m-0 truncate text-xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">{openUser.username}</h2>
