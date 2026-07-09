@@ -152,6 +152,11 @@ export default function Login() {
               className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2.5 py-1 text-[13px] font-semibold text-[color:var(--lilac)] transition hover:bg-[rgba(168,139,250,0.10)] active:scale-95"
             >
               {showPassword ? "Hide" : "Show"}
+              <div className="mt-2 text-right">
+     <Link href="/reset" className="text-[13px] font-medium text-[color:var(--lilac)] transition hover:text-[color:var(--violet-bright)] hover:underline">
+       Forgot password?
+     </Link>
+   </div>
             </button>
           </div>
 

@@ -131,6 +131,11 @@ export default function Home() {
       .from("pets")
       .select("id", { count: "exact", head: true })
       .then(({ count }) => setPetCount(count ?? null));
+      supabase
+      .from("pets")
+      .select("id", { count: "exact", head: true })
+      .eq("category", "pet")
+      .then(({ count }) => setPetCount(count ?? null));
   }, []);
 
   useEffect(() => {
