@@ -42,6 +42,40 @@ async function resolveReview(formData: FormData) {
 
 const fmt = (n: number) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
+type FlaggedPet = {
+  name: string;
+  pet_variant_id: number | null;
+  neon: string;
+  fly: boolean;
+  ride: boolean;
+  count: number;
+};
+
+const variantSuffix = (it: any) =>
+  `${it.neon === "neon" ? " (neon)" : it.neon === "mega" ? " (mega)" : ""}${it.fly ? " F" : ""}${it.ride ? " R" : ""}`;
+
+// key for matching a user-flagged pet to a holdings row: variant id when
+// available, otherwise name+variant shape
+const keyOf = (it: any) =>
+  it.pet_variant_id != null
+    ? `v${it.pet_variant_id}`
+    : `n${(it.name ?? "").toLowerCase()}|${it.neon}|${it.fly ? 1 : 0}|${it.ride ? 1 : 0}`;
+
+function ConfidenceBadge({ confidence }: { confidence?: string }) {
+  if (!confidence) return null;
+  const isConfident = confidence === "confident";
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+        isConfident ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
+      }`}
+      title={`Scanner confidence: ${confidence}`}
+    >
+      {confidence}
+    </span>
+  );
+}
+
 export default async function AdminReviewPage() {
   if (!(await currentAdminEmail())) {
     return <div className="mx-auto max-w-lg p-6 text-sm text-gray-600">Not authorized.</div>;
@@ -50,7 +84,7 @@ export default async function AdminReviewPage() {
   const db = adminClient();
   const { data: reviews } = await db
     .from("review_queue")
-    .select("id, user_id, snapshot_id, status, created_at")
+    .select("id, user_id, snapshot_id, status, created_at, flagged_pets")
     .eq("status", "pending")
     .order("created_at", { ascending: false });
 
@@ -80,6 +114,8 @@ export default async function AdminReviewPage() {
           {rows.map((r) => {
             const snap: any = r.snapshot_id ? snapOf.get(r.snapshot_id) : null;
             const holdings: any[] = Array.isArray(snap?.holdings) ? snap.holdings : [];
+            const flagged: FlaggedPet[] = Array.isArray(r.flagged_pets) ? r.flagged_pets : [];
+            const flaggedKeys = new Set(flagged.map(keyOf));
             return (
               <li key={r.id} className="rounded-xl border border-gray-200 p-4">
                 <div className="flex items-center justify-between gap-4">
@@ -88,6 +124,7 @@ export default async function AdminReviewPage() {
                     <p className="text-xs text-gray-400">
                       flagged {new Date(r.created_at).toLocaleString()}
                       {snap ? ` · total ${fmt(snap.total_value)}` : " · no snapshot"}
+                      {flagged.length > 0 ? ` · ${flagged.length} pet${flagged.length === 1 ? "" : "s"} disputed` : " · no specific pets marked"}
                     </p>
                   </div>
                   <form action={resolveReview}>
@@ -98,19 +135,50 @@ export default async function AdminReviewPage() {
                   </form>
                 </div>
 
+                {/* what the user says is wrong */}
+                {flagged.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+                      User marked as wrong
+                    </p>
+                    <ul className="mt-1 space-y-0.5 text-sm text-red-800">
+                      {flagged.map((f, i) => (
+                        <li key={i}>
+                          {f.name}{f.count > 1 ? ` ×${f.count}` : ""}{variantSuffix(f)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* the full scan from the snapshot — flagged rows highlighted,
+                    scanner confidence shown per row */}
                 {holdings.length > 0 && (
                   <ul className="mt-3 divide-y divide-gray-100 rounded-lg border border-gray-100 text-sm">
-                    {holdings.map((it, i) => (
-                      <li key={i} className="flex items-center justify-between px-3 py-1.5">
-                        <span className="text-gray-700">
-                          {it.name}{it.count > 1 ? ` ×${it.count}` : ""}
-                          {it.neon === "neon" ? " (neon)" : it.neon === "mega" ? " (mega)" : ""}
-                          {it.fly ? " F" : ""}{it.ride ? " R" : ""}
-                          {it.confidence && it.confidence !== "confident" ? ` · ${it.confidence}` : ""}
-                        </span>
-                        <span className="tabular-nums text-gray-500">{it.subtotal != null ? fmt(it.subtotal) : "—"}</span>
-                      </li>
-                    ))}
+                    {holdings.map((it, i) => {
+                      const isFlagged = flaggedKeys.has(keyOf(it));
+                      return (
+                        <li
+                          key={i}
+                          className={`flex items-center justify-between gap-3 px-3 py-1.5 ${
+                            isFlagged ? "bg-red-50" : ""
+                          }`}
+                        >
+                          <span className={`flex min-w-0 flex-wrap items-center gap-1.5 ${isFlagged ? "font-medium text-red-800" : "text-gray-700"}`}>
+                            {isFlagged && (
+                              <span aria-label="Disputed by user" title="Disputed by user" className="text-red-500">⚑</span>
+                            )}
+                            <span className="truncate">
+                              {it.name}{it.count > 1 ? ` ×${it.count}` : ""}{variantSuffix(it)}
+                            </span>
+                            <ConfidenceBadge confidence={it.confidence} />
+                          </span>
+                          <span className={`flex-none tabular-nums ${isFlagged ? "text-red-700" : "text-gray-500"}`}>
+                            {it.subtotal != null ? fmt(it.subtotal) : "—"}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </li>

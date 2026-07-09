@@ -95,9 +95,13 @@ export default function PetScanner() {
   const [elapsed, setElapsed] = useState(0); // seconds spent on the current scan
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // manual-review selection mode: user taps the pets the scanner got wrong
+  const [flagMode, setFlagMode] = useState(false);
+  const [flaggedIdx, setFlaggedIdx] = useState<Set<number>>(new Set());
+  const [flagSubmitting, setFlagSubmitting] = useState(false);
+
   // Object URLs for the thumbnails. Built once per files change and revoked on
-  // the next change/unmount — the previous inline URL.createObjectURL(f) leaked
-  // a new blob URL on every render.
+  // the next change/unmount.
   useEffect(() => {
     const urls = files.map((f) => URL.createObjectURL(f));
     setPreviews(urls);
@@ -119,6 +123,7 @@ export default function PetScanner() {
   // next response refreshes it.
   const reset = () => {
     setResult(null); setError(null); setLimitMsg(null); setSaved(null); setFlagMsg(null);
+    setFlagMode(false); setFlaggedIdx(new Set());
   };
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
@@ -189,13 +194,50 @@ export default function PetScanner() {
     }
   }
 
-  async function requestCheck() {
+  function toggleFlag(i: number) {
+    setFlaggedIdx((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+
+  // Send the user's selections. The server links this to their latest submit
+  // snapshot, so the admin sees the full scan (with confidence ratings) plus
+  // exactly which pets the user says are wrong.
+  async function submitFlags() {
+    if (!result?.items || flaggedIdx.size === 0 || flagSubmitting) return;
+    setFlagSubmitting(true);
     setFlagMsg(null);
+    const flagged = [...flaggedIdx]
+      .map((i) => result.items![i])
+      .filter(Boolean)
+      .map((it) => ({
+        name: it.name,
+        pet_variant_id: it.pet_variant_id,
+        neon: it.neon,
+        fly: it.fly,
+        ride: it.ride,
+        count: it.count,
+      }));
     try {
-      const res = await fetch("/flag", { method: "POST" });
-      setFlagMsg(res.ok ? "Thanks — we'll manually review this submission." : "Couldn't send the request. Try again.");
+      const res = await fetch("/flag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flagged }),
+      });
+      if (res.ok) {
+        setFlagMsg(`Thanks — ${flagged.length} pet${flagged.length === 1 ? "" : "s"} sent for manual review. We'll take a look.`);
+        setFlagMode(false);
+        setFlaggedIdx(new Set());
+      } else {
+        setFlagMsg("Couldn't send the request. Try again.");
+      }
     } catch {
       setFlagMsg("Couldn't send the request. Try again.");
+    } finally {
+      setFlagSubmitting(false);
     }
   }
 
@@ -450,30 +492,98 @@ export default function PetScanner() {
             <p className="petora-gradient mt-1 text-3xl font-bold tabular-nums [font-family:var(--font-data)]">{fmt(animatedTotal)}</p>
           </div>
 
+          {/* flag-mode banner */}
+          {flagMode && (
+            <div className="ptrs-fade rounded-lg border border-[rgba(168,85,247,0.35)] bg-[rgba(168,85,247,0.08)] px-4 py-3 text-sm text-[color:var(--lilac)]">
+              Tap every pet the scanner got wrong — wrong pet, wrong Neon/Mega tier, wrong Fly/Ride,
+              or wrong count — then hit send below.
+            </div>
+          )}
+
           <ul className="petora-card divide-y divide-[color:var(--line)]">
-            {result.items.map((it, i) => (
-              <li key={i} className="ptrs-reveal flex items-center gap-3 px-4 py-3" style={{ animationDelay: `${Math.min(i, 14) * 40}ms` }}>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium text-[color:var(--text)]">{it.name}</span>
-                    {it.count > 1 && <span className="rounded bg-[rgba(168,139,250,0.12)] px-1.5 py-0.5 text-[11px] font-medium text-[color:var(--lilac)]">×{it.count}</span>}
-                    <VariantChips item={it} />
+            {result.items.map((it, i) => {
+              const isFlagged = flaggedIdx.has(i);
+              const rowInner = (
+                <>
+                  {flagMode && (
+                    <span
+                      aria-hidden="true"
+                      className={`grid h-5 w-5 flex-none place-items-center rounded-md border transition ${
+                        isFlagged
+                          ? "border-[#FCA5B6] bg-[rgba(251,113,133,0.2)] text-[#FCA5B6]"
+                          : "border-[color:var(--line-2)] text-transparent"
+                      }`}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium text-[color:var(--text)]">{it.name}</span>
+                      {it.count > 1 && <span className="rounded bg-[rgba(168,139,250,0.12)] px-1.5 py-0.5 text-[11px] font-medium text-[color:var(--lilac)]">×{it.count}</span>}
+                      <VariantChips item={it} />
+                    </div>
                   </div>
-                </div>
-                <div className="text-right tabular-nums [font-family:var(--font-data)]">
-                  <div className="font-medium text-[color:var(--lilac)]">{it.subtotal === null ? "—" : fmt(it.subtotal)}</div>
-                  {it.count > 1 && it.unit_value !== null && <div className="text-xs text-[color:var(--muted)]">{fmt(it.unit_value)} each</div>}
-                </div>
-              </li>
-            ))}
+                  <div className="text-right tabular-nums [font-family:var(--font-data)]">
+                    <div className="font-medium text-[color:var(--lilac)]">{it.subtotal === null ? "—" : fmt(it.subtotal)}</div>
+                    {it.count > 1 && it.unit_value !== null && <div className="text-xs text-[color:var(--muted)]">{fmt(it.unit_value)} each</div>}
+                  </div>
+                </>
+              );
+
+              return flagMode ? (
+                <li key={i} className="ptrs-reveal" style={{ animationDelay: `${Math.min(i, 14) * 40}ms` }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleFlag(i)}
+                    aria-pressed={isFlagged}
+                    aria-label={`Mark ${it.name} as wrong`}
+                    className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
+                      isFlagged ? "bg-[rgba(251,113,133,0.08)]" : "hover:bg-[rgba(168,139,250,0.05)]"
+                    }`}
+                  >
+                    {rowInner}
+                  </button>
+                </li>
+              ) : (
+                <li key={i} className="ptrs-reveal flex items-center gap-3 px-4 py-3" style={{ animationDelay: `${Math.min(i, 14) * 40}ms` }}>
+                  {rowInner}
+                </li>
+              );
+            })}
           </ul>
 
           {saved?.leaderboard && (
             <div className="ptrs-reveal space-y-2" style={{ animationDelay: "200ms" }}>
-              <button onClick={requestCheck}
-                className="w-full rounded-lg border border-[color:var(--line-2)] px-4 py-2.5 text-sm font-medium text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-[0.99]">
-                Something look wrong? Request a manual check
-              </button>
+              {!flagMode ? (
+                <button onClick={() => { setFlagMode(true); setFlagMsg(null); }}
+                  className="w-full rounded-lg border border-[color:var(--line-2)] px-4 py-2.5 text-sm font-medium text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-[0.99]">
+                  Something look wrong? Request a manual check
+                </button>
+              ) : (
+                <div className="ptrs-fade flex gap-2">
+                  <button
+                    onClick={submitFlags}
+                    disabled={flaggedIdx.size === 0 || flagSubmitting}
+                    className="flex-1 rounded-lg [background-image:var(--ramp-h)] [font-family:var(--font-display)] px-4 py-2.5 text-sm font-semibold text-[#1a1030] transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100"
+                  >
+                    {flagSubmitting
+                      ? "Sending…"
+                      : flaggedIdx.size === 0
+                        ? "Tap the pets that are wrong"
+                        : `Send ${flaggedIdx.size} pet${flaggedIdx.size === 1 ? "" : "s"} for review`}
+                  </button>
+                  <button
+                    onClick={() => { setFlagMode(false); setFlaggedIdx(new Set()); }}
+                    disabled={flagSubmitting}
+                    className="rounded-lg border border-[color:var(--line-2)] px-4 py-2.5 text-sm font-medium text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-[0.99] disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
               {flagMsg && <p className="ptrs-fade text-sm text-[color:var(--muted)]">{flagMsg}</p>}
             </div>
           )}

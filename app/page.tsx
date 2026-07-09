@@ -4,8 +4,9 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { AvatarCircle } from "@/lib/avatars";
 
-type Row = { rank: number; username: string; total_value: number; is_premium: boolean };
+type Row = { rank: number; user_id: string; username: string; total_value: number; is_premium: boolean };
 
 // The three feature cards double as the onboarding flow — they really are steps
 // (scan → track → rank), so they carry step numbers.
@@ -94,21 +95,42 @@ function Skel({ className = "" }: { className?: string }) {
 
 export default function Home() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [avatars, setAvatars] = useState<Record<string, string | null>>({});
   const [boardLoading, setBoardLoading] = useState(true);
+  const [petCount, setPetCount] = useState<number | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
-    supabase.rpc("get_leaderboard", { limit_count: 5 }).then(({ data }) => {
-      setRows((data ?? []).map((r: any) => ({
+    supabase.rpc("get_leaderboard", { limit_count: 5 }).then(async ({ data }) => {
+      const mapped: Row[] = (data ?? []).map((r: any) => ({
         rank: Number(r.rank),
+        user_id: r.user_id,
         username: r.username,
         total_value: Number(r.total_value),
         is_premium: Boolean(r.is_premium),
-      })));
+      }));
+      setRows(mapped);
       setBoardLoading(false);
+      if (mapped.length > 0) {
+        const { data: av } = await supabase.rpc("get_public_avatars", {
+          p_user_ids: mapped.map((r) => r.user_id),
+        });
+        const next: Record<string, string | null> = {};
+        (av ?? []).forEach((a: any) => { next[a.user_id] = a.avatar_id ?? null; });
+        setAvatars(next);
+      }
     });
+  }, []);
+
+  // pets table is anon-readable (the free catalog depends on it), so a head
+  // count is cheap and gives the hero a real number to show
+  useEffect(() => {
+    supabase
+      .from("pets")
+      .select("id", { count: "exact", head: true })
+      .then(({ count }) => setPetCount(count ?? null));
   }, []);
 
   useEffect(() => {
@@ -124,8 +146,7 @@ export default function Home() {
   }, []);
 
   // Scroll-triggered reveals: anything with [data-reveal] fades up when it
-  // enters the viewport (instead of time-delayed animations that may have
-  // already fired off-screen). Re-runs when the leaderboard rows mount.
+  // enters the viewport. Re-runs when the leaderboard rows mount.
   useEffect(() => {
     const els = Array.from(document.querySelectorAll<HTMLElement>("[data-reveal]"));
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -155,6 +176,7 @@ export default function Home() {
 
   const top = rows[0];
   const animatedTop = useCountUp(top ? top.total_value : 0);
+  const animatedPets = useCountUp(petCount ?? 0);
 
   return (
     <main className="relative mx-auto max-w-5xl px-6 pb-24 pt-16">
@@ -216,7 +238,7 @@ export default function Home() {
       />
 
       {/* hero */}
-      <section className="relative grid items-center gap-10 md:grid-cols-[1.1fr_0.9fr]">
+      <section className="relative grid items-center gap-10 md:grid-cols-[1.05fr_0.95fr]">
         {/* twinkling sparkles */}
         <Sparkle className="ptr-twinkle pointer-events-none absolute -left-2 top-0 h-4 w-4 text-[color:var(--lilac)]" style={{ animationDelay: "0s" }} />
         <Sparkle className="ptr-twinkle pointer-events-none absolute right-1/3 -top-6 h-3 w-3 text-[#C4B5FD]" style={{ animationDelay: "1.3s" }} />
@@ -287,42 +309,68 @@ export default function Home() {
           </div>
         </div>
 
-        {/* live top-trader card */}
-        <div className="ptr-fade ptr-float petora-card relative overflow-hidden p-7" style={{ animationDelay: "140ms", borderColor: "var(--line-2)", boxShadow: "0 24px 60px -30px rgba(124,58,237,0.55)" }}>
-          <p className="petora-eyebrow">Top trader right now</p>
-          {boardLoading ? (
-            <>
-              <Skel className="mt-3 h-5 w-32" />
-              <Skel className="mt-2 h-11 w-48" />
-              <Skel className="mt-3 h-3.5 w-40" />
-            </>
-          ) : (
-            <>
-              <div className="mt-3 flex items-center gap-1.5 text-[15px] font-semibold text-[color:var(--text)]">
-                {top ? top.username : "The board is waiting"}
-                {top?.is_premium && <Crown className="h-4 w-4 flex-none text-[#FBBF24]" />}
+        {/* right column: live trader card + stat chips (fills the column so it
+            balances the tall text side on desktop) */}
+        <div className="flex flex-col gap-4">
+          <div className="ptr-fade ptr-float petora-card relative overflow-hidden p-7" style={{ animationDelay: "140ms", borderColor: "var(--line-2)", boxShadow: "0 24px 60px -30px rgba(124,58,237,0.55)" }}>
+            <p className="petora-eyebrow">Top trader right now</p>
+            {boardLoading ? (
+              <>
+                <Skel className="mt-3 h-5 w-32" />
+                <Skel className="mt-2 h-11 w-48" />
+                <Skel className="mt-3 h-3.5 w-40" />
+              </>
+            ) : (
+              <>
+                <div className="mt-3 flex items-center gap-2 text-[15px] font-semibold text-[color:var(--text)]">
+                  {top && <AvatarCircle avatarId={avatars[top.user_id]} className="h-6 w-6" />}
+                  {top ? top.username : "The board is waiting"}
+                  {top?.is_premium && <Crown className="h-4 w-4 flex-none text-[#FBBF24]" />}
+                </div>
+                <div className="mt-1 text-[44px] font-bold leading-none text-[color:var(--lilac)] [font-family:var(--font-data)] tabular-nums">
+                  {top ? animatedTop.toLocaleString() : "0"}
+                </div>
+                <p className="mt-2 text-[13px] text-[color:var(--muted)]">
+                  {top ? "Total verified net worth" : "Scan your board to claim the top spot"}
+                </p>
+              </>
+            )}
+            <svg viewBox="0 0 400 90" preserveAspectRatio="none" className="mt-6 h-[80px] w-full opacity-90" aria-hidden="true">
+              <defs>
+                <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stopColor="#DDD6FE" /><stop offset="1" stopColor="#A855F7" />
+                </linearGradient>
+                <linearGradient id="under" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor="#8B5CF6" stopOpacity="0.28" /><stop offset="1" stopColor="#8B5CF6" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <path d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12 L400,90 L0,90 Z" fill="url(#under)" />
+              <path className="ptr-draw" d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12" fill="none" stroke="url(#line)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <circle className="ptr-pulse" cx="400" cy="12" r="4.5" fill="#fff" />
+            </svg>
+          </div>
+
+          {/* stat chips under the card */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="ptr-fade petora-card p-4" style={{ animationDelay: "240ms" }}>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Pets tracked</p>
+              <div className="mt-1 text-[26px] font-bold leading-none text-[color:var(--lilac)] tabular-nums [font-family:var(--font-data)]">
+                {petCount == null ? <Skel className="h-7 w-16" /> : `${animatedPets.toLocaleString()}+`}
               </div>
-              <div className="mt-1 text-[44px] font-bold leading-none text-[color:var(--lilac)] [font-family:var(--font-data)] tabular-nums">
-                {top ? animatedTop.toLocaleString() : "0"}
-              </div>
-              <p className="mt-2 text-[13px] text-[color:var(--muted)]">
-                {top ? "Total verified net worth" : "Scan your board to claim the top spot"}
+              <p className="mt-1 text-[12px] text-[color:var(--muted)]">every tier &amp; potion combo</p>
+            </div>
+            <div className="ptr-fade petora-card p-4" style={{ animationDelay: "300ms" }}>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Values synced to</p>
+              <p className="petora-gradient mt-1 text-[26px] font-bold leading-none [font-family:var(--font-display)]">Elvebredd</p>
+              <p className="mt-1 flex items-center gap-1.5 text-[12px] text-[color:var(--muted)]">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[color:var(--up)] opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--up)]" />
+                </span>
+                live market data
               </p>
-            </>
-          )}
-          <svg viewBox="0 0 400 90" preserveAspectRatio="none" className="mt-6 h-[80px] w-full opacity-90" aria-hidden="true">
-            <defs>
-              <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0" stopColor="#DDD6FE" /><stop offset="1" stopColor="#A855F7" />
-              </linearGradient>
-              <linearGradient id="under" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#8B5CF6" stopOpacity="0.28" /><stop offset="1" stopColor="#8B5CF6" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            <path d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12 L400,90 L0,90 Z" fill="url(#under)" />
-            <path className="ptr-draw" d="M0,74 L50,68 L100,72 L150,56 L200,60 L250,40 L300,46 L350,24 L400,12" fill="none" stroke="url(#line)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            <circle className="ptr-pulse" cx="400" cy="12" r="4.5" fill="#fff" />
-          </svg>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -439,7 +487,7 @@ export default function Home() {
                   <span className="text-center text-sm font-bold text-[color:var(--muted)] [font-family:var(--font-data)]">#{r.rank}</span>
                 )}
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="h-7 w-7 flex-none rounded-full [background-image:linear-gradient(135deg,#3a2b66,#6d52c4)]" />
+                  <AvatarCircle avatarId={avatars[r.user_id]} className="h-7 w-7" />
                   <span className="truncate text-[14.5px] font-semibold text-[color:var(--text)]">{r.username}</span>
                   {r.is_premium && <Crown className="h-3.5 w-3.5 flex-none text-[#FBBF24]" />}
                 </div>
@@ -468,7 +516,7 @@ export default function Home() {
           </p>
           <div className="relative mt-6 flex flex-wrap items-center justify-center gap-3">
             <Link
-              href={email ? "/portfolio" : "/login"}
+              href={email ? "/scan" : "/login"}
               className="ptr-cta inline-flex items-center gap-2 rounded-full px-7 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
             >
               {email ? "Scan my pets" : "Get started — it's free"} <span className="ptr-arrow">→</span>

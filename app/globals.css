@@ -59,3 +59,30 @@ body::after{
   background:rgba(168,139,250,.10); border:1px solid var(--line-2); transition:.15s;
 }
 .petora-howto-link:hover{ background:rgba(168,85,247,.16); }
+/* ── themed scrollbars ─────────────────────────────────────────── */
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 92, 246, 0.35) transparent;
+}
+
+/* Chrome / Edge / Safari */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.6);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

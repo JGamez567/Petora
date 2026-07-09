@@ -345,7 +345,7 @@ export default function Catalog() {
         <div className="ptrm-reveal mt-4 inline-flex items-center gap-2 rounded-full border border-[color:var(--line-2)] bg-[rgba(168,139,250,0.07)] px-4 py-2">
           <Sparkle className="ptrm-pulse h-3.5 w-3.5 text-[color:var(--lilac)]" />
           <span className="text-[13px] font-semibold text-[color:var(--text)]">
-            Premium — <span className="ptrm-shimmer">unlimited graphs</span> on every pet &amp; variant
+            Premium — <span className="ptrm-shimmer">unlimited graphs </span> on every pet &amp; variant
           </span>
         </div>
       );
