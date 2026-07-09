@@ -301,6 +301,7 @@ export default function PetScanner() {
             "Keep duplicate pets together in one box.",
             "Make sure the username you verified with is visible.",
             "Remove any stickers.",
+  "Only pets are scanned — eggs and pet wear aren't counted (find their values in the Catalog).",
           ].map((tip, i) => (
             <li key={tip} className="ptrs-reveal flex items-start gap-2.5" style={{ animationDelay: `${120 + i * 80}ms` }}>
               <svg

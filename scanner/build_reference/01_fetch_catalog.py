@@ -3,6 +3,11 @@
 Pull the pet catalog (id, name, rarity, icon_url) from Supabase and save it
 locally as data/catalog.json. The 'pets' table is public-read, so the anon
 key is enough. ~741 rows fit in one request (PostgREST default page = 1000).
+
+IMPORTANT: the table now also holds eggs and pet wear (category column) for
+the website catalog. The scanner must ONLY match actual pets, so this fetch
+filters category=eq.pet — without it, egg/wear icons would enter the hash
+reference library and could misidentify pets in screenshots.
 """
 
 import json
@@ -33,7 +38,11 @@ def main() -> None:
         "apikey": SUPABASE_ANON_KEY,
         "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
     }
-    params = {"select": "id,name,rarity,icon_url", "limit": "2000"}
+    params = {
+        "select": "id,name,rarity,icon_url",
+        "category": "eq.pet",  # pets only — eggs/pet wear are catalog-site-only
+        "limit": "2000",
+    }
 
     resp = requests.get(url, headers=headers, params=params, timeout=30)
     resp.raise_for_status()
@@ -41,7 +50,7 @@ def main() -> None:
 
     # Basic sanity reporting so you catch data problems before downloading.
     missing_icon = [p["id"] for p in pets if not p.get("icon_url")]
-    print(f"Fetched {len(pets)} pets")
+    print(f"Fetched {len(pets)} pets (category=pet only)")
     print(f"  with icon_url:    {len(pets) - len(missing_icon)}")
     print(f"  missing icon_url: {len(missing_icon)}")
     if missing_icon:
