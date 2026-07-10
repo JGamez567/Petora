@@ -98,6 +98,7 @@ export default function Home() {
   const [avatars, setAvatars] = useState<Record<string, string | null>>({});
   const [boardLoading, setBoardLoading] = useState(true);
   const [petCount, setPetCount] = useState<number | null>(null);
+  const [catalogCount, setCatalogCount] = useState<number | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const router = useRouter();
@@ -124,18 +125,21 @@ export default function Home() {
     });
   }, []);
 
-  // pets table is anon-readable (the free catalog depends on it), so a head
-  // count is cheap and gives the hero a real number to show
+  // pets table is anon-readable (the free catalog depends on it), so head
+  // counts are cheap. Two counts, two DIFFERENT setters — never point two
+  // queries at the same setter (that raced once and made the stat flicker).
+  //   petCount     → category='pet' only (754-ish) → "Pets tracked" chip
+  //   catalogCount → everything incl. eggs + wear  → "Catalog items" chip
   useEffect(() => {
     supabase
       .from("pets")
       .select("id", { count: "exact", head: true })
-      .then(({ count }) => setPetCount(count ?? null));
-      supabase
-      .from("pets")
-      .select("id", { count: "exact", head: true })
       .eq("category", "pet")
       .then(({ count }) => setPetCount(count ?? null));
+    supabase
+      .from("pets")
+      .select("id", { count: "exact", head: true })
+      .then(({ count }) => setCatalogCount(count ?? null));
   }, []);
 
   useEffect(() => {
@@ -182,6 +186,7 @@ export default function Home() {
   const top = rows[0];
   const animatedTop = useCountUp(top ? top.total_value : 0);
   const animatedPets = useCountUp(petCount ?? 0);
+  const animatedCatalog = useCountUp(catalogCount ?? 0);
 
   return (
     <main className="relative mx-auto max-w-5xl px-6 pb-24 pt-16">
@@ -365,14 +370,16 @@ export default function Home() {
               <p className="mt-1 text-[12px] text-[color:var(--muted)]">every tier &amp; potion combo</p>
             </div>
             <div className="ptr-fade petora-card p-4" style={{ animationDelay: "300ms" }}>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Values synced to</p>
-              <p className="petora-gradient mt-1 text-[26px] font-bold leading-none [font-family:var(--font-display)]">Elvebredd</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Catalog items</p>
+              <div className="mt-1 text-[26px] font-bold leading-none text-[color:var(--lilac)] tabular-nums [font-family:var(--font-data)]">
+                {catalogCount == null ? <Skel className="h-7 w-16" /> : `${animatedCatalog.toLocaleString()}+`}
+              </div>
               <p className="mt-1 flex items-center gap-1.5 text-[12px] text-[color:var(--muted)]">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[color:var(--up)] opacity-60" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--up)]" />
                 </span>
-                live market data
+                pets, eggs &amp; wear — values refresh every 6h
               </p>
             </div>
           </div>

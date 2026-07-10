@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
@@ -62,6 +62,15 @@ const FREE_GRAPHS_PER_DAY = 3;
 const freeKeyFor = (uid: string) => `petora_free_graphs_${uid}`;
 const today = () => new Date().toISOString().slice(0, 10);
 
+// ── Performance knobs (old phones / weak PCs) ────────────────────────────────
+// The grid renders in slices of PAGE_SIZE instead of dumping 700–950 cards
+// into the DOM at once; more load as you scroll (or via the Show-more button).
+const PAGE_SIZE = 60;
+// Supabase REST caps any single select at 1,000 rows, so the catalog is
+// fetched in FETCH_PAGE-row pages until a short page comes back. This is what
+// keeps Pet Wear (954 and growing) from silently truncating at 1,000.
+const FETCH_PAGE = 1000;
+
 function loadFreeGraphs(uid: string): number[] {
   try {
     const raw = JSON.parse(localStorage.getItem(freeKeyFor(uid)) || "null");
@@ -74,6 +83,32 @@ function saveFreeGraphs(uid: string, ids: number[]) {
 }
 
 const fmt = (n: number) => n.toLocaleString();
+
+// Animated count-up toward `target`. Eases out via rAF; snaps under reduced motion.
+function useCountUp(target: number, duration = 600): number {
+  const [display, setDisplay] = useState(0);
+  const fromRef = useRef(0);
+  useEffect(() => {
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { fromRef.current = target; setDisplay(target); return; }
+    const from = fromRef.current;
+    if (from === target) { setDisplay(target); return; }
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(Math.round(from + (target - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); fromRef.current = target; };
+  }, [target, duration]);
+  return display;
+}
 
 function Sparkle({ className = "" }: { className?: string }) {
   return (
@@ -154,8 +189,17 @@ export default function Catalog() {
   const [history, setHistory] = useState<{ ts: number; value: number }[]>([]);
   const [graphLoading, setGraphLoading] = useState(false);
 
+  // current value of the exact variant picked in the modal
+  const [variantValue, setVariantValue] = useState<number | null>(null);
+  const [variantValueLoading, setVariantValueLoading] = useState(false);
+  const animatedVariantValue = useCountUp(variantValue ?? 0);
+
   const [freeGraphIds, setFreeGraphIds] = useState<number[]>([]);
   const [access, setAccess] = useState<GraphAccess>("pending");
+
+  // how many grid cards are currently rendered (incremental rendering)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const usedFree = Math.min(FREE_GRAPHS_PER_DAY, freeGraphIds.length);
   const remainingFree = Math.max(0, FREE_GRAPHS_PER_DAY - usedFree);
@@ -180,23 +224,35 @@ export default function Catalog() {
   // Load the grid for the active category. Pets are valued at their Normal
   // Fly & Ride variant (§6 invariant); eggs and pet wear have exactly one
   // plain (normal, no-potion) variant, so that's what we join on for them.
+  //
+  // Fetched in FETCH_PAGE-row pages via .range() — Supabase REST silently
+  // caps a single select at 1,000 rows, and Pet Wear is already at ~954.
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       const isPet = category === "pet";
-      const { data, error } = await supabase
-        .from("pets")
-        .select(`id, name, rarity, icon_url, category,
-          pet_variants!inner ( neon, fly, ride, current_pet_values ( value ) )`)
-        .eq("category", category)
-        .eq("pet_variants.neon", "normal")
-        .eq("pet_variants.fly", isPet)
-        .eq("pet_variants.ride", isPet)
-        .order("name");
+      const all: any[] = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from("pets")
+          .select(`id, name, rarity, icon_url, category,
+            pet_variants!inner ( neon, fly, ride, current_pet_values ( value ) )`)
+          .eq("category", category)
+          .eq("pet_variants.neon", "normal")
+          .eq("pet_variants.fly", isPet)
+          .eq("pet_variants.ride", isPet)
+          .order("name")
+          .range(from, from + FETCH_PAGE - 1);
+        if (cancelled) return;
+        if (error) { console.error(error); setLoading(false); return; }
+        all.push(...(data ?? []));
+        if (!data || data.length < FETCH_PAGE) break; // short page → done
+        from += FETCH_PAGE;
+      }
       if (cancelled) return;
-      if (error) { console.error(error); setLoading(false); return; }
-      setPets((data ?? []).map((p: any) => ({
+      setPets(all.map((p: any) => ({
         id: p.id, name: p.name, rarity: p.rarity, icon_url: p.icon_url,
         category: (p.category ?? "pet") as Category,
         value: p.pet_variants?.[0]?.current_pet_values?.[0]?.value ?? null,
@@ -216,6 +272,12 @@ export default function Catalog() {
       })));
     });
   }, []);
+
+  // Any change that reshapes the grid resets incremental rendering back to
+  // the first slice — keeps the DOM small on weak devices.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [category, search, rarityFilter, sortDir, tab]);
 
   // Resolve graph access for the selected item (reactive — see v2 notes).
   useEffect(() => {
@@ -239,6 +301,31 @@ export default function Catalog() {
       setAccess("locked-limit");
     }
   }, [selected, authChecked, userId, premium]);
+
+  // Current value of the selected variant — shown next to the name in the
+  // modal header and refreshed whenever the tier/potion picks change. Values
+  // are public data (the grid already shows them), so this is NOT behind the
+  // graph gate; only the history graph is.
+  useEffect(() => {
+    if (!selected) return;
+    let cancelled = false;
+    setVariantValueLoading(true);
+    supabase
+      .from("pet_variants")
+      .select("id, current_pet_values ( value )")
+      .eq("pet_id", selected.id)
+      .eq("neon", tier)
+      .eq("fly", potion.fly)
+      .eq("ride", potion.ride)
+      .limit(1)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const v = (data?.[0] as any)?.current_pet_values?.[0]?.value;
+        setVariantValue(v == null ? null : Number(v));
+        setVariantValueLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selected, tier, potion]);
 
   useEffect(() => {
     if (!selected || access !== "allowed") return;
@@ -287,6 +374,29 @@ export default function Catalog() {
       if (b.value == null) return -1;
       return sortDir === "desc" ? b.value - a.value : a.value - b.value;
     });
+
+  // only this slice is actually in the DOM; the sentinel below grows it
+  const visible = filtered.slice(0, visibleCount);
+  const hasMore = visibleCount < filtered.length;
+
+  // Auto-load the next slice when the sentinel scrolls into view. The
+  // Show-more button underneath does the same thing for browsers without
+  // IntersectionObserver (and as a manual fallback).
+  useEffect(() => {
+    if (tab !== "all" || loading || !hasMore) return;
+    const el = sentinelRef.current;
+    if (!el || !("IntersectionObserver" in window)) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length));
+        }
+      },
+      { rootMargin: "600px 0px" } // start loading well before it's visible
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [tab, loading, hasMore, filtered.length]);
 
   const rising = movers.filter((m) => m.change > 0).sort((a, b) => b.change - a.change);
   const falling = movers.filter((m) => m.change < 0).sort((a, b) => a.change - b.change);
@@ -428,7 +538,7 @@ export default function Catalog() {
                 </span>
 
                 <span className="relative grid h-10 w-10 place-items-center">
-                  {m.icon_url && <img src={m.icon_url} alt="" className="h-10 w-10 object-contain" />}
+                  {m.icon_url && <img src={m.icon_url} alt="" width={40} height={40} loading="lazy" decoding="async" className="h-10 w-10 object-contain" />}
                   {topMover && (
                     <span className="ptrm-pulse absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full" style={{ background: accent, boxShadow: `0 0 8px ${accent}` }} />
                   )}
@@ -725,38 +835,61 @@ export default function Catalog() {
               )}
             </div>
           ) : (
-            <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
-              {filtered.map((pet, idx) => {
-                const meta = rarityMeta(pet.rarity);
-                return (
-                  <div
-                    key={pet.id}
-                    onClick={() => openPet(pet)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPet(pet); } }}
-                    className="petora-card ptrm-reveal ptrm-card-hover group cursor-pointer p-4 text-center hover:border-[color:var(--line-2)] hover:bg-[rgba(168,139,250,0.06)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--violet)]"
-                    style={{ animationDelay: `${Math.min(idx, 20) * 25}ms` }}
+            <>
+              <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
+                {visible.map((pet, idx) => {
+                  const meta = rarityMeta(pet.rarity);
+                  // only the first slice gets staggered reveal delays; cards
+                  // loaded by scrolling appear immediately (no delay math)
+                  const delay = idx < PAGE_SIZE ? Math.min(idx, 20) * 25 : 0;
+                  return (
+                    <div
+                      key={pet.id}
+                      onClick={() => openPet(pet)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPet(pet); } }}
+                      className="petora-card ptrm-reveal ptrm-card-hover group cursor-pointer p-4 text-center hover:border-[color:var(--line-2)] hover:bg-[rgba(168,139,250,0.06)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--violet)]"
+                      style={{ animationDelay: `${delay}ms` }}
+                    >
+                      {pet.icon_url && (
+                        <img
+                          src={pet.icon_url}
+                          alt={pet.name}
+                          width={72}
+                          height={72}
+                          loading="lazy"
+                          decoding="async"
+                          className="mx-auto h-[72px] w-[72px] object-contain transition-transform duration-200 group-hover:scale-110"
+                        />
+                      )}
+                      <div className="mt-2 text-sm font-semibold text-[color:var(--text)]">{pet.name}</div>
+                      <div className="mt-1 flex items-center justify-center gap-1.5">
+                        {meta && <span className="h-2 w-2 rounded-full" style={{ background: meta.dot, boxShadow: `0 0 0 1px ${meta.ring}` }} />}
+                        <span className="text-xs capitalize text-[color:var(--muted)]">{pet.rarity}</span>
+                      </div>
+                      <div className="mt-1.5 font-bold text-[color:var(--lilac)] [font-family:var(--font-data)]">
+                        {pet.value != null ? fmt(pet.value) : "\u2014"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* incremental-load footer: invisible sentinel auto-loads the
+                  next slice as you approach it; the button is the fallback */}
+              {hasMore && (
+                <div className="mt-6 text-center">
+                  <div ref={sentinelRef} aria-hidden="true" />
+                  <button
+                    onClick={() => setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length))}
+                    className="rounded-full border border-[color:var(--line-2)] px-6 py-2.5 text-[14px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-95"
                   >
-                    {pet.icon_url && (
-                      <img
-                        src={pet.icon_url}
-                        alt={pet.name}
-                        className="mx-auto h-[72px] w-[72px] object-contain transition-transform duration-200 group-hover:scale-110"
-                      />
-                    )}
-                    <div className="mt-2 text-sm font-semibold text-[color:var(--text)]">{pet.name}</div>
-                    <div className="mt-1 flex items-center justify-center gap-1.5">
-                      {meta && <span className="h-2 w-2 rounded-full" style={{ background: meta.dot, boxShadow: `0 0 0 1px ${meta.ring}` }} />}
-                      <span className="text-xs capitalize text-[color:var(--muted)]">{pet.rarity}</span>
-                    </div>
-                    <div className="mt-1.5 font-bold text-[color:var(--lilac)] [font-family:var(--font-data)]">
-                      {pet.value != null ? fmt(pet.value) : "\u2014"}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    Show more ({filtered.length - visibleCount} left)
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -813,7 +946,7 @@ export default function Catalog() {
             style={{ borderColor: "var(--line-2)", boxShadow: "0 30px 80px -30px rgba(124,58,237,0.6)" }}
           >
             <div className="mb-4 flex items-center gap-3">
-              {selected.icon_url && <img src={selected.icon_url} alt={selected.name} className="h-12 w-12 object-contain" />}
+              {selected.icon_url && <img src={selected.icon_url} alt={selected.name} width={48} height={48} decoding="async" className="h-12 w-12 object-contain" />}
               <div className="min-w-0 flex-1">
                 <h2 className="m-0 truncate text-xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">{selected.name}</h2>
                 {authChecked && (
@@ -829,6 +962,21 @@ export default function Catalog() {
                       {access === "locked-limit" ? "Free graph limit reached today" : `${remainingFree} free graph${remainingFree === 1 ? "" : "s"} left today`}
                     </span>
                   )
+                )}
+              </div>
+              <div className="flex-none text-right">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+                  Value
+                </div>
+                {variantValueLoading ? (
+                  <Skel className="ml-auto mt-1 h-6 w-16" />
+                ) : (
+                  <div
+                    className="mt-0.5 text-xl font-bold leading-none text-[color:var(--lilac)] tabular-nums [font-family:var(--font-data)]"
+                    aria-live="polite"
+                  >
+                    {variantValue == null ? "\u2014" : fmt(animatedVariantValue)}
+                  </div>
                 )}
               </div>
               <button
