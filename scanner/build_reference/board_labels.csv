@@ -1,0 +1,55 @@
+filename,pet_name
+# ==== box 0 (top board) — reading order ====
+# VERIFY each name against the image before running! Rows starting with # are skipped.
+b0_c00__Chick__NR__review_s15.0.png,Chick
+b0_c01__Ring_Tailed_Lemur__NR__review_s13.0.png,Ring-Tailed Lemur
+b0_c02__Hare__N__review_s16.0.png,Hare
+b0_c03__Giant_Anteater__NR__review_s13.0.png,Giant Anteater
+b0_c04__Cow__FR__weak_s19.0.png,Cow
+b0_c05__Cow__FR__review_s17.0.png,Cow
+b0_c06__Cow__FR__weak_s19.0.png,Cow
+b0_c07__Cow__FR__review_s17.0.png,Cow
+b0_c08__Cow__FR__weak_s19.0.png,Cow
+b0_c09__Turkey__R__confident_s10.0.png,Turkey
+# your correction: was Cuddly Candle
+b0_c10__Cuddly_Candle__NR__weak_s24.0.png,Jellyfish
+# your correction: was Flamingo (same pet as c10 — script keeps the first, that's fine)
+b0_c11__Flamingo__MFR__weak_s24.0.png,Jellyfish
+# your correction: was Rattlesnake
+b0_c12__Rattlesnake__R__review_s17.0.png,Alpaca
+b0_c13__Black_Kite__-__review_s15.0.png,Black Kite
+b0_c14__Strawberry_Shortcake_Bat_Dragon__FR__review_s17.0.png,Strawberry Shortcake Bat Dragon
+b0_c15__Rainbow_Dragon__NFR__review_s17.0.png,Rainbow Dragon
+# your correction: was Bandicoot
+b0_c16__Bandicoot__FR__weak_s21.0.png,Rose Dragon
+b0_c17__Monkey_King__R__weak_s19.0.png,Monkey King
+b0_c18__Turtle__MFR__weak_s19.0.png,Turtle
+b0_c19__Turtle__FR__review_s13.0.png,Turtle
+# ==== box 1 (bottom board) ====
+b1_c00__Kangaroo__NFR__confident_s11.0.png,Kangaroo
+b1_c01__Kangaroo__NR__weak_s19.0.png,Kangaroo
+b1_c02__Hot_Doggo__M__review_s17.0.png,Hot Doggo
+b1_c03__Grim_Dragon__FR__weak_s19.0.png,Grim Dragon
+# your correction: was Gorilla
+b1_c04__Gorilla__R__review_s18.0.png,Giraffe
+b1_c05__Frostbite_Bear__NR__review_s15.0.png,Frostbite Bear
+b1_c06__Crow__FR__confident_s11.0.png,Crow
+# your correction: was Blue Ringed Octopus
+b1_c07__Blue_Ringed_Octopus__MFR__weak_s19.0.png,Corn Doggo
+b1_c08__Arctic_Fox__FR__weak_s21.0.png,Arctic Fox
+b1_c09__Dancing_Dragon__R__review_s15.0.png,Dancing Dragon
+b1_c10__Octopus__NFR__review_s16.0.png,Octopus
+b1_c11__Cabbit__-__confident_s8.0.png,Cabbit
+b1_c12__Caterpillar__-__confident_s11.0.png,Caterpillar
+# your correction: was Golden King Penguin
+b1_c13__Golden_King_Penguin__M__review_s16.0.png,King Penguin
+# your correction: was Cat
+b1_c14__Cat__MFR__weak_s20.0.png,Bee
+b1_c15__Peppermint_Penguin__-__confident_s10.0.png,Peppermint Penguin
+# your correction: was African Wild Dog
+b1_c16__African_Wild_Dog__MFR__weak_s19.0.png,Sloth
+b1_c17__Mermicorn__NFR__confident_s12.0.png,Mermicorn
+# now matches correctly after the rebuild
+b1_c18__Tealwood_Monster__N__review_s15.0.png,Tealwood Monster
+# your correction: was Halloween Black Mummy Cat
+b1_c19__Halloween_Black_Mummy_Cat__M__review_s18.0.png,Oakee Wizard

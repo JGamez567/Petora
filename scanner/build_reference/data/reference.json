@@ -672,6 +672,30 @@
     "norm_path": "data\\icons_norm\\177.png"
   },
   {
+    "id": 17788,
+    "name": "Aestus",
+    "rarity": "legendary",
+    "phash": "bf67d098070e386b",
+    "colorhash": "07200070000",
+    "norm_path": "data\\icons_norm\\17788.png"
+  },
+  {
+    "id": 17789,
+    "name": "Solaris",
+    "rarity": "legendary",
+    "phash": "bbc9c4342c0bf3cc",
+    "colorhash": "07400090000",
+    "norm_path": "data\\icons_norm\\17789.png"
+  },
+  {
+    "id": 17790,
+    "name": "Clubtail Dragonfly",
+    "rarity": "uncommon",
+    "phash": "e9cd963268cda3a2",
+    "colorhash": "0724a000000",
+    "norm_path": "data\\icons_norm\\17790.png"
+  },
+  {
     "id": 178,
     "name": "Crow",
     "rarity": "legendary",
@@ -742,6 +766,22 @@
     "phash": "efb185d0930fd28c",
     "colorhash": "06380000000",
     "norm_path": "data\\icons_norm\\185.png"
+  },
+  {
+    "id": 18535,
+    "name": "Rainbow Trout",
+    "rarity": "ultra rare",
+    "phash": "fa9791c0833dceb0",
+    "colorhash": "06006200000",
+    "norm_path": "data\\icons_norm\\18535.png"
+  },
+  {
+    "id": 18536,
+    "name": "Tealwood Monster",
+    "rarity": "legendary",
+    "phash": "cac2a52bd3259cb6",
+    "colorhash": "07006000000",
+    "norm_path": "data\\icons_norm\\18536.png"
   },
   {
     "id": 186,
@@ -2006,6 +2046,70 @@
     "phash": "bcb0c99ad22b53a6",
     "colorhash": "06180000000",
     "norm_path": "data\\icons_norm\\327.png"
+  },
+  {
+    "id": 32711,
+    "name": "River Otter",
+    "rarity": "rare",
+    "phash": "f8b596498536d638",
+    "colorhash": "06e00000000",
+    "norm_path": "data\\icons_norm\\32711.png"
+  },
+  {
+    "id": 32712,
+    "name": "Irish Setter",
+    "rarity": "uncommon",
+    "phash": "e93a96e190978799",
+    "colorhash": "06c00018000",
+    "norm_path": "data\\icons_norm\\32712.png"
+  },
+  {
+    "id": 32713,
+    "name": "Stygian Owl",
+    "rarity": "ultra rare",
+    "phash": "bc8cc94b93f2c724",
+    "colorhash": "06006000040",
+    "norm_path": "data\\icons_norm\\32713.png"
+  },
+  {
+    "id": 32714,
+    "name": "Burger Bear",
+    "rarity": "ultra rare",
+    "phash": "be96c1798171e634",
+    "colorhash": "03e00008000",
+    "norm_path": "data\\icons_norm\\32714.png"
+  },
+  {
+    "id": 32715,
+    "name": "Storm Condor",
+    "rarity": "ultra rare",
+    "phash": "aacad3353ecc8923",
+    "colorhash": "07202018000",
+    "norm_path": "data\\icons_norm\\32715.png"
+  },
+  {
+    "id": 32716,
+    "name": "Oakee Knight",
+    "rarity": "ultra rare",
+    "phash": "bc9ec5364e199c31",
+    "colorhash": "06e00000000",
+    "norm_path": "data\\icons_norm\\32716.png"
+  },
+  {
+    "id": 32717,
+    "name": "Oakee Wizard",
+    "rarity": "legendary",
+    "phash": "e4cdc6329a81d97a",
+    "colorhash": "07e00010000",
+    "norm_path": "data\\icons_norm\\32717.png"
+  },
+  {
+    "id": 32718,
+    "name": "Oakee",
+    "rarity": "uncommon",
+    "phash": "b6c6c0372fc8c939",
+    "colorhash": "07e00000000",
+    "norm_path": "data\\icons_norm\\32718.png"
   },
   {
     "id": 328,
@@ -4112,6 +4216,30 @@
     "norm_path": "data\\icons_norm\\564.png"
   },
   {
+    "id": 56429,
+    "name": "S'mores Raccoon",
+    "rarity": "ultra rare",
+    "phash": "be85c0781ea7719c",
+    "colorhash": "07e01000000",
+    "norm_path": "data\\icons_norm\\56429.png"
+  },
+  {
+    "id": 56430,
+    "name": "Ruddy Duck",
+    "rarity": "rare",
+    "phash": "e63ab5c8ca938723",
+    "colorhash": "07200608040",
+    "norm_path": "data\\icons_norm\\56430.png"
+  },
+  {
+    "id": 56431,
+    "name": "Forest Sprite",
+    "rarity": "common",
+    "phash": "b999d0349363cbcc",
+    "colorhash": "07c40001000",
+    "norm_path": "data\\icons_norm\\56431.png"
+  },
+  {
     "id": 565,
     "name": "Rock Pigeon",
     "rarity": "uncommon",
@@ -5946,15 +6074,6 @@
     "source": "board"
   },
   {
-    "id": 616,
-    "name": "Mermicorn",
-    "rarity": "legendary",
-    "phash": "b39dc4e1314e116f",
-    "colorhash": "06048000041",
-    "norm_path": "data\\icons_norm\\616_board.png",
-    "source": "board"
-  },
-  {
     "id": 8,
     "name": "Flamingo",
     "rarity": "ultra rare",
@@ -5997,6 +6116,303 @@
     "phash": "f08dc639154e917b",
     "colorhash": "07400201001",
     "norm_path": "data\\icons_norm\\247_board.png",
+    "source": "board"
+  },
+  {
+    "id": 457,
+    "name": "Chick",
+    "rarity": "common",
+    "phash": "e8a3d2949c5c9579",
+    "colorhash": "06000030000",
+    "norm_path": "data\\icons_norm\\457_board.png",
+    "source": "board"
+  },
+  {
+    "id": 345,
+    "name": "Ring-Tailed Lemur",
+    "rarity": "rare",
+    "phash": "bb87c0e0c51f9c2d",
+    "colorhash": "07040201002",
+    "norm_path": "data\\icons_norm\\345_board.png",
+    "source": "board"
+  },
+  {
+    "id": 349,
+    "name": "Hare",
+    "rarity": "rare",
+    "phash": "e39dcc2491ce9553",
+    "colorhash": "06e00000000",
+    "norm_path": "data\\icons_norm\\349_board.png",
+    "source": "board"
+  },
+  {
+    "id": 350,
+    "name": "Giant Anteater",
+    "rarity": "rare",
+    "phash": "eeb1c08f387a07e4",
+    "colorhash": "06600000001",
+    "norm_path": "data\\icons_norm\\350_board.png",
+    "source": "board"
+  },
+  {
+    "id": 341,
+    "name": "Cow",
+    "rarity": "rare",
+    "phash": "f897c4cd9c338178",
+    "colorhash": "07000240082",
+    "norm_path": "data\\icons_norm\\341_board.png",
+    "source": "board"
+  },
+  {
+    "id": 36,
+    "name": "Turkey",
+    "rarity": "ultra rare",
+    "phash": "bb67d0b4c0d887c9",
+    "colorhash": "06e00000000",
+    "norm_path": "data\\icons_norm\\36_board.png",
+    "source": "board"
+  },
+  {
+    "id": 23,
+    "name": "Jellyfish",
+    "rarity": "ultra rare",
+    "phash": "e2b5489d9562b563",
+    "colorhash": "07040201002",
+    "norm_path": "data\\icons_norm\\23_board.png",
+    "source": "board"
+  },
+  {
+    "id": 29,
+    "name": "Alpaca",
+    "rarity": "ultra rare",
+    "phash": "f3b5d8ec054a8571",
+    "colorhash": "06c00000000",
+    "norm_path": "data\\icons_norm\\29_board.png",
+    "source": "board"
+  },
+  {
+    "id": 160,
+    "name": "Black Kite",
+    "rarity": "ultra rare",
+    "phash": "ed3795c96531181e",
+    "colorhash": "06c00000000",
+    "norm_path": "data\\icons_norm\\160_board.png",
+    "source": "board"
+  },
+  {
+    "id": 193,
+    "name": "Strawberry Shortcake Bat Dragon",
+    "rarity": "legendary",
+    "phash": "e299d2b784d6a44d",
+    "colorhash": "07c00000001",
+    "norm_path": "data\\icons_norm\\193_board.png",
+    "source": "board"
+  },
+  {
+    "id": 238,
+    "name": "Rainbow Dragon",
+    "rarity": "legendary",
+    "phash": "bea5c0db1f688516",
+    "colorhash": "06000000049",
+    "norm_path": "data\\icons_norm\\238_board.png",
+    "source": "board"
+  },
+  {
+    "id": 689,
+    "name": "Rose Dragon",
+    "rarity": "legendary",
+    "phash": "f295c50b4d729569",
+    "colorhash": "072000c0001",
+    "norm_path": "data\\icons_norm\\689_board.png",
+    "source": "board"
+  },
+  {
+    "id": 184,
+    "name": "Monkey King",
+    "rarity": "legendary",
+    "phash": "f08dcf64947284cf",
+    "colorhash": "06e00000000",
+    "norm_path": "data\\icons_norm\\184_board.png",
+    "source": "board"
+  },
+  {
+    "id": 185,
+    "name": "Turtle",
+    "rarity": "legendary",
+    "phash": "faa594ca930f98f0",
+    "colorhash": "063c0000000",
+    "norm_path": "data\\icons_norm\\185_board.png",
+    "source": "board"
+  },
+  {
+    "id": 192,
+    "name": "Kangaroo",
+    "rarity": "legendary",
+    "phash": "e693da8d0cd28579",
+    "colorhash": "06c00000000",
+    "norm_path": "data\\icons_norm\\192_board.png",
+    "source": "board"
+  },
+  {
+    "id": 189,
+    "name": "Hot Doggo",
+    "rarity": "legendary",
+    "phash": "f0b4c6cdd9662478",
+    "colorhash": "07e00000000",
+    "norm_path": "data\\icons_norm\\189_board.png",
+    "source": "board"
+  },
+  {
+    "id": 220,
+    "name": "Grim Dragon",
+    "rarity": "legendary",
+    "phash": "faedc491116a3167",
+    "colorhash": "07000200082",
+    "norm_path": "data\\icons_norm\\220_board.png",
+    "source": "board"
+  },
+  {
+    "id": 173,
+    "name": "Giraffe",
+    "rarity": "legendary",
+    "phash": "e3b1d86d84c68d4d",
+    "colorhash": "06400018000",
+    "norm_path": "data\\icons_norm\\173_board.png",
+    "source": "board"
+  },
+  {
+    "id": 578,
+    "name": "Frostbite Bear",
+    "rarity": "legendary",
+    "phash": "eabdc0c31d5b3164",
+    "colorhash": "07007000000",
+    "norm_path": "data\\icons_norm\\578_board.png",
+    "source": "board"
+  },
+  {
+    "id": 178,
+    "name": "Crow",
+    "rarity": "legendary",
+    "phash": "b899c16486c3cdd7",
+    "colorhash": "07000200082",
+    "norm_path": "data\\icons_norm\\178_board.png",
+    "source": "board"
+  },
+  {
+    "id": 308,
+    "name": "Corn Doggo",
+    "rarity": "legendary",
+    "phash": "bc87c0a31d7bc166",
+    "colorhash": "07200018000",
+    "norm_path": "data\\icons_norm\\308_board.png",
+    "source": "board"
+  },
+  {
+    "id": 21,
+    "name": "Arctic Fox",
+    "rarity": "ultra rare",
+    "phash": "e0b948978772956e",
+    "colorhash": "07000200082",
+    "norm_path": "data\\icons_norm\\21_board.png",
+    "source": "board"
+  },
+  {
+    "id": 225,
+    "name": "Dancing Dragon",
+    "rarity": "legendary",
+    "phash": "faa5c49c196324de",
+    "colorhash": "06600008001",
+    "norm_path": "data\\icons_norm\\225_board.png",
+    "source": "board"
+  },
+  {
+    "id": 265,
+    "name": "Octopus",
+    "rarity": "legendary",
+    "phash": "f0b5c6b1145e8557",
+    "colorhash": "06600010000",
+    "norm_path": "data\\icons_norm\\265_board.png",
+    "source": "board"
+  },
+  {
+    "id": 583,
+    "name": "Cabbit",
+    "rarity": "ultra rare",
+    "phash": "b49ec163c57c174c",
+    "colorhash": "06c00008000",
+    "norm_path": "data\\icons_norm\\583_board.png",
+    "source": "board"
+  },
+  {
+    "id": 11,
+    "name": "Caterpillar",
+    "rarity": "ultra rare",
+    "phash": "bfc1c03f43c81567",
+    "colorhash": "06040006000",
+    "norm_path": "data\\icons_norm\\11_board.png",
+    "source": "board"
+  },
+  {
+    "id": 133,
+    "name": "King Penguin",
+    "rarity": "ultra rare",
+    "phash": "e4b7528dccdc8931",
+    "colorhash": "07000210010",
+    "norm_path": "data\\icons_norm\\133_board.png",
+    "source": "board"
+  },
+  {
+    "id": 131,
+    "name": "Bee",
+    "rarity": "ultra rare",
+    "phash": "f885d44a94c7945f",
+    "colorhash": "07400010000",
+    "norm_path": "data\\icons_norm\\131_board.png",
+    "source": "board"
+  },
+  {
+    "id": 10,
+    "name": "Peppermint Penguin",
+    "rarity": "ultra rare",
+    "phash": "e53396c3923999cc",
+    "colorhash": "06000080006",
+    "norm_path": "data\\icons_norm\\10_board.png",
+    "source": "board"
+  },
+  {
+    "id": 132,
+    "name": "Sloth",
+    "rarity": "ultra rare",
+    "phash": "f0a5d26b9993c14d",
+    "colorhash": "06c00000008",
+    "norm_path": "data\\icons_norm\\132_board.png",
+    "source": "board"
+  },
+  {
+    "id": 616,
+    "name": "Mermicorn",
+    "rarity": "legendary",
+    "phash": "ba9dc4e1111c917f",
+    "colorhash": "06088000000",
+    "norm_path": "data\\icons_norm\\616_board.png",
+    "source": "board"
+  },
+  {
+    "id": 18536,
+    "name": "Tealwood Monster",
+    "rarity": "legendary",
+    "phash": "cac1353dd23694f2",
+    "colorhash": "06006000000",
+    "norm_path": "data\\icons_norm\\18536_board.png",
+    "source": "board"
+  },
+  {
+    "id": 32717,
+    "name": "Oakee Wizard",
+    "rarity": "legendary",
+    "phash": "f0a5c23399c7317c",
+    "colorhash": "07c00008000",
+    "norm_path": "data\\icons_norm\\32717_board.png",
     "source": "board"
   }
 ]

@@ -8,6 +8,14 @@ Turn the raw icons into the actual reference library:
      the pets your scanner will confuse. This is your go/no-go signal on
      whether HASH_SIZE is discriminative enough before you build step 2.
 
+BOARD REFERENCES ARE PRESERVED: 07_add_board_reference.py appends extra
+entries with "source": "board" (in-game board renders for pets whose Elvebredd
+icon hashes differently from their board look — e.g. Golden Penguin, 2D Kitty).
+Those are hand-made and NOT reproducible from icons_raw, so a rebuild must
+carry them forward. This script now reloads the previous reference.json and
+re-appends every board entry whose pet id still exists in the fresh catalog
+build. Without this, every rebuild would silently delete all board fixes.
+
 THE GOLDEN RULE: at scan time you must normalize each backpack cell with the
 EXACT same normalize_icon() function before hashing it. Keep this function as
 the single source of truth and import it from your scanner later.
@@ -55,14 +63,30 @@ def normalize_icon(img: Image.Image) -> Image.Image:
     return canvas.resize((NORM_SIZE, NORM_SIZE), Image.LANCZOS)
 
 
-def build_reference() -> list[dict]:
+def load_board_entries() -> list[dict]:
+    """Board-render references from the PREVIOUS reference.json (added by
+    07_add_board_reference.py). They can't be rebuilt from icons_raw, so we
+    carry them across rebuilds."""
+    if not REFERENCE.exists():
+        return []
+    try:
+        prev = json.loads(REFERENCE.read_text())
+    except Exception as e:
+        print(f"  WARNING: could not parse existing {REFERENCE} ({e}) — "
+              f"no board entries carried over")
+        return []
+    return [e for e in prev if e.get("source") == "board"]
+
+
+def build_reference():
     pets = json.loads(CATALOG.read_text())
+    board_entries = load_board_entries()
     NORM_DIR.mkdir(parents=True, exist_ok=True)
 
     by_id = {str(p["id"]): p for p in pets}
     library = []
     live = []  # (id, name, phash_obj, colorhash_obj) — used by the collision check
-    missing = bad = 0
+    bad = 0
 
     for raw_path in sorted(RAW_DIR.glob("*.*")):
         pid = raw_path.stem
@@ -104,8 +128,21 @@ def build_reference() -> list[dict]:
         print(f"  {len(missing)} pets have icon_url but no normalized image — "
               f"check data/download_failures.json")
 
+    # ---- Re-append preserved board references ----------------------------
+    kept, dropped = [], []
+    for e in board_entries:
+        if e["id"] in have:
+            kept.append(e)
+        else:
+            dropped.append(e)  # pet no longer in catalog — stale, drop it
+    library.extend(kept)
+    print(f"Board references carried over: {len(kept)}"
+          + (f" (dropped {len(dropped)} whose pet left the catalog: "
+             f"{[e['name'] for e in dropped]})" if dropped else ""))
+    # -----------------------------------------------------------------------
+
     REFERENCE.write_text(json.dumps(library, indent=2))
-    print(f"Wrote {REFERENCE}")
+    print(f"Wrote {REFERENCE} ({len(library)} total entries)")
     return library, live
 
 
