@@ -37,8 +37,11 @@ const POTIONS = [
 ] as const;
 
 const DEFAULT_TIER = "normal";
-const DEFAULT_POTION = POTIONS[3]; // Normal Fly & Ride (pets)
-const PLAIN_POTION = POTIONS[0];   // eggs & pet wear have one plain variant
+// Catalog-wide default is the plain Normal / No-Potion variant — the grid
+// values every item at it, and the modal opens on it so the number you tapped
+// is the number you see. (Rising/Falling still uses Normal Fly & Ride inside
+// the get_movers RPC — that's server-side and intentionally unchanged.)
+const DEFAULT_POTION = POTIONS[0];
 
 const RANGES = [
   { key: "day",   label: "Day",   days: 1 },
@@ -221,9 +224,11 @@ export default function Catalog() {
     if (userId) setFreeGraphIds(loadFreeGraphs(userId));
   }, [userId]);
 
-  // Load the grid for the active category. Pets are valued at their Normal
-  // Fly & Ride variant (§6 invariant); eggs and pet wear have exactly one
-  // plain (normal, no-potion) variant, so that's what we join on for them.
+  // Load the grid for the active category. EVERY category is valued at its
+  // plain Normal / No-Potion variant (fly=false, ride=false) — pets included.
+  // Eggs and pet wear only have that one variant anyway, so a single join
+  // covers all three tabs. (Rising/Falling values at Normal Fly & Ride inside
+  // the get_movers RPC — deliberately different, do not "fix".)
   //
   // Fetched in FETCH_PAGE-row pages via .range() — Supabase REST silently
   // caps a single select at 1,000 rows, and Pet Wear is already at ~954.
@@ -231,7 +236,6 @@ export default function Catalog() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const isPet = category === "pet";
       const all: any[] = [];
       let from = 0;
       while (true) {
@@ -241,8 +245,8 @@ export default function Catalog() {
             pet_variants!inner ( neon, fly, ride, current_pet_values ( value ) )`)
           .eq("category", category)
           .eq("pet_variants.neon", "normal")
-          .eq("pet_variants.fly", isPet)
-          .eq("pet_variants.ride", isPet)
+          .eq("pet_variants.fly", false)
+          .eq("pet_variants.ride", false)
           .order("name")
           .range(from, from + FETCH_PAGE - 1);
         if (cancelled) return;
@@ -404,9 +408,9 @@ export default function Catalog() {
   function openPet(pet: Pet) {
     setSelected(pet);
     setTier(DEFAULT_TIER);
-    // pets default to the Normal Fly & Ride graph; eggs/pet wear only have the
-    // plain variant, so the pickers are hidden and we query that directly
-    setPotion(pet.category === "pet" ? DEFAULT_POTION : PLAIN_POTION);
+    // modal opens on the plain Normal / No-Potion variant so its value matches
+    // the number that was showing on the grid card the user just tapped
+    setPotion(DEFAULT_POTION);
     setRange(RANGES[2]);
     setHistory([]);
     setAccess("pending"); // resolved by the access effect
@@ -721,7 +725,7 @@ export default function Catalog() {
         <p className="petora-eyebrow">Live market</p>
         <h1 className="mt-1.5 text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">Catalog</h1>
         <p className="mt-2 text-sm text-[color:var(--muted)]">
-          {loading ? "Loading" : `${filtered.length} ${CATEGORIES.find((c) => c.key === category)?.label.toLowerCase()}`} &middot; tap one to see its value history
+          {loading ? "Loading" : `${filtered.length} ${CATEGORIES.find((c) => c.key === category)?.label.toLowerCase()}`} &middot; values shown are Normal, no potions &middot; tap one for details
         </p>
       </div>
 
