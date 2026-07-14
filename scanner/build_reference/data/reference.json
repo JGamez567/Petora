@@ -6486,5 +6486,50 @@
     "colorhash": "07c00008000",
     "norm_path": "data\\icons_norm\\32717_board_88b3c3fc.png",
     "source": "board"
+  },
+  {
+    "id": 288,
+    "name": "Alicorn",
+    "rarity": "legendary",
+    "phash": "bc1fc1e1441c14ff",
+    "colorhash": "07006600000",
+    "norm_path": "data\\icons_norm\\288_board_2b9558f3.png",
+    "source": "board"
+  },
+  {
+    "id": 280,
+    "name": "Black Chow-Chow",
+    "rarity": "legendary",
+    "phash": "b09bc3ed4c6e6132",
+    "colorhash": "07001c00000",
+    "norm_path": "data\\icons_norm\\280_board_28d23833.png",
+    "source": "board"
+  },
+  {
+    "id": 723,
+    "name": "Easter Bunny",
+    "rarity": "legendary",
+    "phash": "f095d92d14d28577",
+    "colorhash": "06c00000000",
+    "norm_path": "data\\icons_norm\\723_board_7d272aad.png",
+    "source": "board"
+  },
+  {
+    "id": 724,
+    "name": "Purrowl",
+    "rarity": "legendary",
+    "phash": "ecb4d04b9572c9b1",
+    "colorhash": "06c00000000",
+    "norm_path": "data\\icons_norm\\724_board_8783ec9f.png",
+    "source": "board"
+  },
+  {
+    "id": 168,
+    "name": "Lunar White Tiger",
+    "rarity": "ultra rare",
+    "phash": "fa35c4c5c15b951c",
+    "colorhash": "07000440003",
+    "norm_path": "data\\icons_norm\\168_board_4b38d49b.png",
+    "source": "board"
   }
 ]
