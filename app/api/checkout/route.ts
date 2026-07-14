@@ -59,7 +59,12 @@ export async function POST(req: Request) {
       // broken "Manage billing" link. Force a Customer for the payment path so
       // every buyer is reachable in the billing portal / webhook. (Subscription
       // mode always creates a Customer, so this option only applies to payment.)
-      ...(isMonthly ? {} : { customer_creation: 'always' as const }),
+      // Force a Customer for one-time payments ONLY when we're not already
+      // attaching an existing one — Stripe rejects customer + customer_creation
+      // being set together.
+      ...(!isMonthly && !profile.stripe_customer_id
+        ? { customer_creation: 'always' as const }
+        : {}),
 
       success_url: `${siteUrl}/premium/success`,
       cancel_url: `${siteUrl}/premium/cancelled`,
