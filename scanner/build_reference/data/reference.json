@@ -6074,6 +6074,15 @@
     "source": "board"
   },
   {
+    "id": 616,
+    "name": "Mermicorn",
+    "rarity": "legendary",
+    "phash": "b39dc4e1314e116f",
+    "colorhash": "06048000041",
+    "norm_path": "data\\icons_norm\\616_board.png",
+    "source": "board"
+  },
+  {
     "id": 8,
     "name": "Flamingo",
     "rarity": "ultra rare",
@@ -6124,7 +6133,7 @@
     "rarity": "common",
     "phash": "e8a3d2949c5c9579",
     "colorhash": "06000030000",
-    "norm_path": "data\\icons_norm\\457_board.png",
+    "norm_path": "data\\icons_norm\\457_board_65ca5f34.png",
     "source": "board"
   },
   {
@@ -6133,7 +6142,7 @@
     "rarity": "rare",
     "phash": "bb87c0e0c51f9c2d",
     "colorhash": "07040201002",
-    "norm_path": "data\\icons_norm\\345_board.png",
+    "norm_path": "data\\icons_norm\\345_board_fb987678.png",
     "source": "board"
   },
   {
@@ -6142,7 +6151,7 @@
     "rarity": "rare",
     "phash": "e39dcc2491ce9553",
     "colorhash": "06e00000000",
-    "norm_path": "data\\icons_norm\\349_board.png",
+    "norm_path": "data\\icons_norm\\349_board_f93b8b85.png",
     "source": "board"
   },
   {
@@ -6151,7 +6160,7 @@
     "rarity": "rare",
     "phash": "eeb1c08f387a07e4",
     "colorhash": "06600000001",
-    "norm_path": "data\\icons_norm\\350_board.png",
+    "norm_path": "data\\icons_norm\\350_board_d3a1d608.png",
     "source": "board"
   },
   {
@@ -6160,7 +6169,43 @@
     "rarity": "rare",
     "phash": "f897c4cd9c338178",
     "colorhash": "07000240082",
-    "norm_path": "data\\icons_norm\\341_board.png",
+    "norm_path": "data\\icons_norm\\341_board_e89c76c1.png",
+    "source": "board"
+  },
+  {
+    "id": 341,
+    "name": "Cow",
+    "rarity": "rare",
+    "phash": "f897c0cd9c13b178",
+    "colorhash": "07000240082",
+    "norm_path": "data\\icons_norm\\341_board_51f839e6.png",
+    "source": "board"
+  },
+  {
+    "id": 341,
+    "name": "Cow",
+    "rarity": "rare",
+    "phash": "f897c4cd9c338178",
+    "colorhash": "07000240082",
+    "norm_path": "data\\icons_norm\\341_board_574b879e.png",
+    "source": "board"
+  },
+  {
+    "id": 341,
+    "name": "Cow",
+    "rarity": "rare",
+    "phash": "f897c0cd9c13b178",
+    "colorhash": "07000240082",
+    "norm_path": "data\\icons_norm\\341_board_c06f9a6b.png",
+    "source": "board"
+  },
+  {
+    "id": 341,
+    "name": "Cow",
+    "rarity": "rare",
+    "phash": "f897c4cd9c338178",
+    "colorhash": "07000240082",
+    "norm_path": "data\\icons_norm\\341_board_5f571e66.png",
     "source": "board"
   },
   {
@@ -6169,7 +6214,7 @@
     "rarity": "ultra rare",
     "phash": "bb67d0b4c0d887c9",
     "colorhash": "06e00000000",
-    "norm_path": "data\\icons_norm\\36_board.png",
+    "norm_path": "data\\icons_norm\\36_board_5756ece4.png",
     "source": "board"
   },
   {
@@ -6178,7 +6223,16 @@
     "rarity": "ultra rare",
     "phash": "e2b5489d9562b563",
     "colorhash": "07040201002",
-    "norm_path": "data\\icons_norm\\23_board.png",
+    "norm_path": "data\\icons_norm\\23_board_1c7b9481.png",
+    "source": "board"
+  },
+  {
+    "id": 23,
+    "name": "Jellyfish",
+    "rarity": "ultra rare",
+    "phash": "f28558c7857a8177",
+    "colorhash": "07000200049",
+    "norm_path": "data\\icons_norm\\23_board_04af37a5.png",
     "source": "board"
   },
   {
@@ -6187,16 +6241,16 @@
     "rarity": "ultra rare",
     "phash": "f3b5d8ec054a8571",
     "colorhash": "06c00000000",
-    "norm_path": "data\\icons_norm\\29_board.png",
+    "norm_path": "data\\icons_norm\\29_board_3563b807.png",
     "source": "board"
   },
   {
-    "id": 160,
-    "name": "Black Kite",
+    "id": 25,
+    "name": "Bald Eagle",
     "rarity": "ultra rare",
     "phash": "ed3795c96531181e",
     "colorhash": "06c00000000",
-    "norm_path": "data\\icons_norm\\160_board.png",
+    "norm_path": "data\\icons_norm\\25_board_5d97fb31.png",
     "source": "board"
   },
   {
@@ -6205,7 +6259,7 @@
     "rarity": "legendary",
     "phash": "e299d2b784d6a44d",
     "colorhash": "07c00000001",
-    "norm_path": "data\\icons_norm\\193_board.png",
+    "norm_path": "data\\icons_norm\\193_board_55de78c9.png",
     "source": "board"
   },
   {
@@ -6214,7 +6268,7 @@
     "rarity": "legendary",
     "phash": "bea5c0db1f688516",
     "colorhash": "06000000049",
-    "norm_path": "data\\icons_norm\\238_board.png",
+    "norm_path": "data\\icons_norm\\238_board_d75322fb.png",
     "source": "board"
   },
   {
@@ -6223,7 +6277,7 @@
     "rarity": "legendary",
     "phash": "f295c50b4d729569",
     "colorhash": "072000c0001",
-    "norm_path": "data\\icons_norm\\689_board.png",
+    "norm_path": "data\\icons_norm\\689_board_2b30a57f.png",
     "source": "board"
   },
   {
@@ -6232,7 +6286,7 @@
     "rarity": "legendary",
     "phash": "f08dcf64947284cf",
     "colorhash": "06e00000000",
-    "norm_path": "data\\icons_norm\\184_board.png",
+    "norm_path": "data\\icons_norm\\184_board_804f0212.png",
     "source": "board"
   },
   {
@@ -6241,7 +6295,16 @@
     "rarity": "legendary",
     "phash": "faa594ca930f98f0",
     "colorhash": "063c0000000",
-    "norm_path": "data\\icons_norm\\185_board.png",
+    "norm_path": "data\\icons_norm\\185_board_f9ef6a17.png",
+    "source": "board"
+  },
+  {
+    "id": 185,
+    "name": "Turtle",
+    "rarity": "legendary",
+    "phash": "eeb1c4da930f50e1",
+    "colorhash": "063c0000000",
+    "norm_path": "data\\icons_norm\\185_board_0ad7efd6.png",
     "source": "board"
   },
   {
@@ -6250,7 +6313,16 @@
     "rarity": "legendary",
     "phash": "e693da8d0cd28579",
     "colorhash": "06c00000000",
-    "norm_path": "data\\icons_norm\\192_board.png",
+    "norm_path": "data\\icons_norm\\192_board_7447041b.png",
+    "source": "board"
+  },
+  {
+    "id": 192,
+    "name": "Kangaroo",
+    "rarity": "legendary",
+    "phash": "f2b7d98c0c538479",
+    "colorhash": "06c00000000",
+    "norm_path": "data\\icons_norm\\192_board_f35a2f1d.png",
     "source": "board"
   },
   {
@@ -6259,7 +6331,7 @@
     "rarity": "legendary",
     "phash": "f0b4c6cdd9662478",
     "colorhash": "07e00000000",
-    "norm_path": "data\\icons_norm\\189_board.png",
+    "norm_path": "data\\icons_norm\\189_board_4fdd6650.png",
     "source": "board"
   },
   {
@@ -6268,7 +6340,7 @@
     "rarity": "legendary",
     "phash": "faedc491116a3167",
     "colorhash": "07000200082",
-    "norm_path": "data\\icons_norm\\220_board.png",
+    "norm_path": "data\\icons_norm\\220_board_afce26f7.png",
     "source": "board"
   },
   {
@@ -6277,7 +6349,7 @@
     "rarity": "legendary",
     "phash": "e3b1d86d84c68d4d",
     "colorhash": "06400018000",
-    "norm_path": "data\\icons_norm\\173_board.png",
+    "norm_path": "data\\icons_norm\\173_board_919bff58.png",
     "source": "board"
   },
   {
@@ -6286,7 +6358,7 @@
     "rarity": "legendary",
     "phash": "eabdc0c31d5b3164",
     "colorhash": "07007000000",
-    "norm_path": "data\\icons_norm\\578_board.png",
+    "norm_path": "data\\icons_norm\\578_board_b20fa76a.png",
     "source": "board"
   },
   {
@@ -6295,7 +6367,7 @@
     "rarity": "legendary",
     "phash": "b899c16486c3cdd7",
     "colorhash": "07000200082",
-    "norm_path": "data\\icons_norm\\178_board.png",
+    "norm_path": "data\\icons_norm\\178_board_c08ca98a.png",
     "source": "board"
   },
   {
@@ -6304,16 +6376,16 @@
     "rarity": "legendary",
     "phash": "bc87c0a31d7bc166",
     "colorhash": "07200018000",
-    "norm_path": "data\\icons_norm\\308_board.png",
+    "norm_path": "data\\icons_norm\\308_board_aa47b030.png",
     "source": "board"
   },
   {
-    "id": 21,
-    "name": "Arctic Fox",
-    "rarity": "ultra rare",
+    "id": 182,
+    "name": "Arctic Reindeer",
+    "rarity": "legendary",
     "phash": "e0b948978772956e",
     "colorhash": "07000200082",
-    "norm_path": "data\\icons_norm\\21_board.png",
+    "norm_path": "data\\icons_norm\\182_board_509440e6.png",
     "source": "board"
   },
   {
@@ -6322,7 +6394,7 @@
     "rarity": "legendary",
     "phash": "faa5c49c196324de",
     "colorhash": "06600008001",
-    "norm_path": "data\\icons_norm\\225_board.png",
+    "norm_path": "data\\icons_norm\\225_board_570a41e2.png",
     "source": "board"
   },
   {
@@ -6331,7 +6403,7 @@
     "rarity": "legendary",
     "phash": "f0b5c6b1145e8557",
     "colorhash": "06600010000",
-    "norm_path": "data\\icons_norm\\265_board.png",
+    "norm_path": "data\\icons_norm\\265_board_b9081a81.png",
     "source": "board"
   },
   {
@@ -6340,7 +6412,7 @@
     "rarity": "ultra rare",
     "phash": "b49ec163c57c174c",
     "colorhash": "06c00008000",
-    "norm_path": "data\\icons_norm\\583_board.png",
+    "norm_path": "data\\icons_norm\\583_board_ade2897d.png",
     "source": "board"
   },
   {
@@ -6349,7 +6421,7 @@
     "rarity": "ultra rare",
     "phash": "bfc1c03f43c81567",
     "colorhash": "06040006000",
-    "norm_path": "data\\icons_norm\\11_board.png",
+    "norm_path": "data\\icons_norm\\11_board_8abd0ac2.png",
     "source": "board"
   },
   {
@@ -6358,7 +6430,7 @@
     "rarity": "ultra rare",
     "phash": "e4b7528dccdc8931",
     "colorhash": "07000210010",
-    "norm_path": "data\\icons_norm\\133_board.png",
+    "norm_path": "data\\icons_norm\\133_board_a3e61fa0.png",
     "source": "board"
   },
   {
@@ -6367,7 +6439,7 @@
     "rarity": "ultra rare",
     "phash": "f885d44a94c7945f",
     "colorhash": "07400010000",
-    "norm_path": "data\\icons_norm\\131_board.png",
+    "norm_path": "data\\icons_norm\\131_board_963c3a55.png",
     "source": "board"
   },
   {
@@ -6376,7 +6448,7 @@
     "rarity": "ultra rare",
     "phash": "e53396c3923999cc",
     "colorhash": "06000080006",
-    "norm_path": "data\\icons_norm\\10_board.png",
+    "norm_path": "data\\icons_norm\\10_board_80cbe329.png",
     "source": "board"
   },
   {
@@ -6385,7 +6457,7 @@
     "rarity": "ultra rare",
     "phash": "f0a5d26b9993c14d",
     "colorhash": "06c00000008",
-    "norm_path": "data\\icons_norm\\132_board.png",
+    "norm_path": "data\\icons_norm\\132_board_b56b8899.png",
     "source": "board"
   },
   {
@@ -6394,7 +6466,7 @@
     "rarity": "legendary",
     "phash": "ba9dc4e1111c917f",
     "colorhash": "06088000000",
-    "norm_path": "data\\icons_norm\\616_board.png",
+    "norm_path": "data\\icons_norm\\616_board_f0f320bc.png",
     "source": "board"
   },
   {
@@ -6403,7 +6475,7 @@
     "rarity": "legendary",
     "phash": "cac1353dd23694f2",
     "colorhash": "06006000000",
-    "norm_path": "data\\icons_norm\\18536_board.png",
+    "norm_path": "data\\icons_norm\\18536_board_c08a3a70.png",
     "source": "board"
   },
   {
@@ -6412,7 +6484,7 @@
     "rarity": "legendary",
     "phash": "f0a5c23399c7317c",
     "colorhash": "07c00008000",
-    "norm_path": "data\\icons_norm\\32717_board.png",
+    "norm_path": "data\\icons_norm\\32717_board_88b3c3fc.png",
     "source": "board"
   }
 ]

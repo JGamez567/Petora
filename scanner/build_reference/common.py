@@ -433,8 +433,12 @@ def best_match(cell_img, library):
         cd = int(qc - imagehash.hex_to_flathash(e["colorhash"], 42))
         scored.append((pd + COLOR_WEIGHT * cd, pd, cd, e["name"], e.get("id")))
     scored.sort(key=lambda x: (x[0], x[1]))
-    best, second = scored[0], scored[1]
-    gap = second[0] - best[0]
+    best = scored[0]
+    # Gap must be measured against the nearest DIFFERENT pet — multiple board
+    # references for the same pet (added by 08) would otherwise zero the gap
+    # and wrongly demote a perfect match to "review".
+    second = next((s for s in scored[1:] if s[4] != best[4]), None)
+    gap = (second[0] - best[0]) if second is not None else 999
     if best[0] <= 12 and gap >= 4:
         conf = "confident"
     elif best[0] <= 18:
@@ -443,7 +447,6 @@ def best_match(cell_img, library):
         conf = "weak"
     return {"pet_id": best[4], "pet": best[3], "score": round(best[0], 1),
             "phash_d": best[1], "color_d": best[2], "confidence": conf}
-
 
 def recognize_board(im, library):
     """Segment + match + badge a single screenshot, in memory."""
