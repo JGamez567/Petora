@@ -6531,5 +6531,59 @@
     "colorhash": "07000440003",
     "norm_path": "data\\icons_norm\\168_board_4b38d49b.png",
     "source": "board"
+  },
+  {
+    "id": 281,
+    "name": "Chocolate Chow-Chow",
+    "rarity": "legendary",
+    "phash": "f0b5caed0c722572",
+    "colorhash": "07c00000001",
+    "norm_path": "data\\icons_norm\\281_board_5ee6e1f9.png",
+    "source": "board"
+  },
+  {
+    "id": 668,
+    "name": "Christmas Spirit",
+    "rarity": "legendary",
+    "phash": "b2b5c1c5457b913a",
+    "colorhash": "07240209000",
+    "norm_path": "data\\icons_norm\\668_board_426069d5.png",
+    "source": "board"
+  },
+  {
+    "id": 264,
+    "name": "Diamond Dragon",
+    "rarity": "legendary",
+    "phash": "f0adcb9e1076854b",
+    "colorhash": "06403000000",
+    "norm_path": "data\\icons_norm\\264_board_341614b7.png",
+    "source": "board"
+  },
+  {
+    "id": 212,
+    "name": "Glacier Kitsune",
+    "rarity": "legendary",
+    "phash": "b43fc1e3449c11e7",
+    "colorhash": "07003400040",
+    "norm_path": "data\\icons_norm\\212_board_26c3684d.png",
+    "source": "board"
+  },
+  {
+    "id": 241,
+    "name": "White Amazon",
+    "rarity": "legendary",
+    "phash": "ba8d41e1c4738c3f",
+    "colorhash": "07000208002",
+    "norm_path": "data\\icons_norm\\241_board_81bca671.png",
+    "source": "board"
+  },
+  {
+    "id": 151,
+    "name": "Robot",
+    "rarity": "ultra rare",
+    "phash": "e29dca3511ce9559",
+    "colorhash": "060000000c1",
+    "norm_path": "data\\icons_norm\\151_board_95884ea9.png",
+    "source": "board"
   }
 ]
