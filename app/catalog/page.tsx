@@ -43,6 +43,9 @@ const DEFAULT_TIER = "normal";
 // the get_movers RPC — that's server-side and intentionally unchanged.)
 const DEFAULT_POTION = POTIONS[0];
 
+// Free users see the real top N movers; the rest sits behind the teaser.
+const FREE_MOVERS = 5;
+
 const RANGES = [
   { key: "day",   label: "Day",   days: 1 },
   { key: "week",  label: "Week",  days: 7 },
@@ -420,7 +423,7 @@ export default function Catalog() {
     openPet({ id: m.pet_id, name: m.name, rarity: null, icon_url: m.icon_url, value: m.current_value, category: "pet" });
   }
 
-  const tabBtn = (key: typeof tab, label: string, locked: boolean) => (
+  const tabBtn = (key: typeof tab, label: string) => (
     <button
       onClick={() => setTab(key)}
       className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all duration-200 active:scale-95 ${
@@ -430,7 +433,6 @@ export default function Catalog() {
       }`}
     >
       {label}
-      {locked && <LockIcon />}
     </button>
   );
 
@@ -467,7 +469,7 @@ export default function Catalog() {
         <div className="ptrm-reveal mt-4 inline-flex items-center gap-2 rounded-full border border-[color:var(--line-2)] bg-[rgba(168,139,250,0.07)] px-4 py-2">
           <Sparkle className="ptrm-pulse h-3.5 w-3.5 text-[color:var(--lilac)]" />
           <span className="text-[13px] font-semibold text-[color:var(--text)]">
-            Premium — <span className="ptrm-shimmer">unlimited graphs</span> on everything in the catalog
+            Premium — <span className="ptrm-shimmer">unlimited graphs</span> and the full movers list
           </span>
         </div>
       );
@@ -492,6 +494,94 @@ export default function Catalog() {
     );
   }
 
+  function MoverRow({ m, i, up, maxAbs }: { m: Mover; i: number; up: boolean; maxAbs: number }) {
+    const accent = up ? "var(--up)" : "var(--down)";
+    const prev = m.current_value - m.change;
+    const pct = prev > 0 ? (m.change / prev) * 100 : null;
+    const barW = Math.max(6, (Math.abs(m.change) / maxAbs) * 100);
+    const topMover = i === 0;
+    return (
+      <button
+        onClick={() => openMover(m)}
+        className="ptrm-row grid w-full grid-cols-[28px_40px_1fr_auto] items-center gap-3 px-4 py-3 text-left transition hover:bg-[rgba(168,139,250,0.06)] active:bg-[rgba(168,139,250,0.10)] [&:not(:last-child)]:border-b [&:not(:last-child)]:border-[color:var(--line)]"
+        style={{ animationDelay: `${Math.min(i, 12) * 45}ms` }}
+      >
+        <span
+          className="text-center text-sm font-bold [font-family:var(--font-data)]"
+          style={{ color: topMover ? accent : "var(--muted)" }}
+        >
+          {i + 1}
+        </span>
+
+        <span className="relative grid h-10 w-10 place-items-center">
+          {m.icon_url && <img src={m.icon_url} alt="" width={40} height={40} loading="lazy" decoding="async" className="h-10 w-10 object-contain" />}
+          {topMover && (
+            <span className="ptrm-pulse absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full" style={{ background: accent, boxShadow: `0 0 8px ${accent}` }} />
+          )}
+        </span>
+
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-[color:var(--text)]">{m.name}</div>
+          <div className="mt-1.5 h-1.5 w-full max-w-[180px] overflow-hidden rounded-full bg-[rgba(168,139,250,0.10)]">
+            <div className="ptrm-bar h-full rounded-full" style={{ width: `${barW}%`, background: accent, animationDelay: `${100 + Math.min(i, 12) * 45}ms` }} />
+          </div>
+        </div>
+
+        <div className="text-right">
+          <div className="font-bold text-[color:var(--lilac)] [font-family:var(--font-data)]">{fmt(m.current_value)}</div>
+          <div className="text-[13px] font-bold [font-family:var(--font-data)]" style={{ color: accent }}>
+            {up ? "\u25B2 +" : "\u25BC "}{fmt(m.change)}
+            {pct != null && <span className="ml-1 opacity-80">({up ? "+" : ""}{pct.toFixed(1)}%)</span>}
+          </div>
+        </div>
+      </button>
+    );
+  }
+
+  // Blurred fake rows + overlay CTA shown to free users under the top 5.
+  function MoversTeaser({ hidden, up }: { hidden: number; up: boolean }) {
+    const accent = up ? "var(--up)" : "var(--down)";
+    return (
+      <div className="relative">
+        {/* decoy rows — pure decoration, no real data */}
+        <div className="pointer-events-none select-none blur-[6px]" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="grid grid-cols-[28px_40px_1fr_auto] items-center gap-3 px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-[color:var(--line)]">
+              <span className="text-center text-sm font-bold text-[color:var(--muted)] [font-family:var(--font-data)]">{FREE_MOVERS + i + 1}</span>
+              <span className="h-10 w-10 rounded-lg bg-[rgba(168,139,250,0.14)]" />
+              <div>
+                <div className="h-4 w-28 rounded bg-[rgba(168,139,250,0.16)]" />
+                <div className="mt-1.5 h-1.5 w-32 rounded-full" style={{ background: accent, opacity: 0.5 }} />
+              </div>
+              <div className="h-8 w-16 rounded bg-[rgba(168,139,250,0.14)]" />
+            </div>
+          ))}
+        </div>
+
+        {/* overlay CTA */}
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center"
+          style={{ background: "linear-gradient(to bottom, transparent, rgba(10,6,20,0.55) 30%, rgba(10,6,20,0.75))" }}
+        >
+          <span className="grid h-9 w-9 place-items-center rounded-lg text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.12)", border: "1px solid var(--line-2)" }}>
+            <LockIcon size={16} />
+          </span>
+          <p className="text-[14.5px] font-semibold text-[color:var(--text)]">
+            {hidden} more {hidden === 1 ? "pet is" : "pets are"} {up ? "rising" : "falling"} right now
+          </p>
+          <p className="text-[12.5px] text-[color:var(--muted)]">Premium unlocks the full list, updated continuously.</p>
+          <Link
+            href="/premium"
+            className="mt-1 rounded-full px-5 py-2 text-[13.5px] font-semibold text-[#1a1030] shadow-[0_10px_28px_-10px_rgba(168,85,247,0.7)] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+          >
+            See all {up ? "gainers" : "drops"}
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Full list for premium; real top FREE_MOVERS + teaser for everyone else.
   function MoverList({ list, up }: { list: Mover[]; up: boolean }) {
     if (list.length === 0) {
       return (
@@ -500,6 +590,8 @@ export default function Catalog() {
         </div>
       );
     }
+    const shown = premium ? list : list.slice(0, FREE_MOVERS);
+    const hidden = list.length - shown.length;
     const maxAbs = Math.max(...list.map((m) => Math.abs(m.change)), 1);
     const accent = up ? "var(--up)" : "var(--down)";
     return (
@@ -517,82 +609,19 @@ export default function Catalog() {
             <h2 className="text-lg font-bold text-[color:var(--text)] [font-family:var(--font-display)]">
               {up ? "Biggest gainers" : "Biggest drops"}
             </h2>
-            <p className="text-xs text-[color:var(--muted)]">Pets only &middot; last 7 days &middot; Normal Fly &amp; Ride &middot; tap to open</p>
+            <p className="text-xs text-[color:var(--muted)]">
+              Pets only &middot; last 7 days &middot; Normal Fly &amp; Ride &middot; tap to open
+              {!premium && ` \u00B7 top ${FREE_MOVERS} free`}
+            </p>
           </div>
         </div>
 
         <div className="petora-card overflow-hidden">
-          {list.map((m, i) => {
-            const prev = m.current_value - m.change;
-            const pct = prev > 0 ? (m.change / prev) * 100 : null;
-            const barW = Math.max(6, (Math.abs(m.change) / maxAbs) * 100);
-            const topMover = i === 0;
-            return (
-              <button
-                key={m.pet_id}
-                onClick={() => openMover(m)}
-                className="ptrm-row grid w-full grid-cols-[28px_40px_1fr_auto] items-center gap-3 px-4 py-3 text-left transition hover:bg-[rgba(168,139,250,0.06)] active:bg-[rgba(168,139,250,0.10)] [&:not(:last-child)]:border-b [&:not(:last-child)]:border-[color:var(--line)]"
-                style={{ animationDelay: `${Math.min(i, 12) * 45}ms` }}
-              >
-                <span
-                  className="text-center text-sm font-bold [font-family:var(--font-data)]"
-                  style={{ color: topMover ? accent : "var(--muted)" }}
-                >
-                  {i + 1}
-                </span>
-
-                <span className="relative grid h-10 w-10 place-items-center">
-                  {m.icon_url && <img src={m.icon_url} alt="" width={40} height={40} loading="lazy" decoding="async" className="h-10 w-10 object-contain" />}
-                  {topMover && (
-                    <span className="ptrm-pulse absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full" style={{ background: accent, boxShadow: `0 0 8px ${accent}` }} />
-                  )}
-                </span>
-
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-[color:var(--text)]">{m.name}</div>
-                  <div className="mt-1.5 h-1.5 w-full max-w-[180px] overflow-hidden rounded-full bg-[rgba(168,139,250,0.10)]">
-                    <div className="ptrm-bar h-full rounded-full" style={{ width: `${barW}%`, background: accent, animationDelay: `${100 + Math.min(i, 12) * 45}ms` }} />
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <div className="font-bold text-[color:var(--lilac)] [font-family:var(--font-data)]">{fmt(m.current_value)}</div>
-                  <div className="text-[13px] font-bold [font-family:var(--font-data)]" style={{ color: accent }}>
-                    {up ? "\u25B2 +" : "\u25BC "}{fmt(m.change)}
-                    {pct != null && <span className="ml-1 opacity-80">({up ? "+" : ""}{pct.toFixed(1)}%)</span>}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+          {shown.map((m, i) => (
+            <MoverRow key={m.pet_id} m={m} i={i} up={up} maxAbs={maxAbs} />
+          ))}
+          {!premium && hidden > 0 && <MoversTeaser hidden={hidden} up={up} />}
         </div>
-      </div>
-    );
-  }
-
-  function LockedMovers() {
-    return (
-      <div className="petora-card ptrm-reveal relative overflow-hidden p-10 text-center">
-        <div className="pointer-events-none absolute inset-0 opacity-[0.13]" aria-hidden="true">
-          <svg viewBox="0 0 400 120" preserveAspectRatio="none" className="h-full w-full">
-            <path className="ptrm-draw" d="M0,90 L60,80 L120,86 L180,60 L240,66 L300,38 L360,46 L400,20" fill="none" stroke="#A855F7" strokeWidth="3" pathLength={1} />
-          </svg>
-        </div>
-        <span className="ptrm-float relative mx-auto grid h-12 w-12 place-items-center rounded-xl text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.10)", border: "1px solid var(--line-2)" }}>
-          <LockIcon size={22} />
-        </span>
-        <h2 className="relative mt-5 text-xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">
-          Rising &amp; Falling is a Premium feature
-        </h2>
-        <p className="relative mx-auto mt-2 max-w-sm text-[14.5px] leading-relaxed text-[color:var(--muted)]">
-          See live gainers and losers across every pet &mdash; exactly what to trade for and what to trade away &mdash; updated continuously.
-        </p>
-        <Link
-          href="/premium"
-          className="relative mt-6 inline-block rounded-full px-7 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
-        >
-          Upgrade to Premium
-        </Link>
       </div>
     );
   }
@@ -733,9 +762,9 @@ export default function Catalog() {
       <AccessStrip />
 
       <div className="ptrm-reveal mt-6 mb-5 inline-flex rounded-[10px] bg-[rgba(168,139,250,0.07)] p-1" style={{ animationDelay: "60ms" }}>
-        {tabBtn("all", "Browse", false)}
-        {tabBtn("rising", `Rising ${rising.length && premium ? `(${rising.length})` : ""}`.trim(), !premium)}
-        {tabBtn("falling", `Falling ${falling.length && premium ? `(${falling.length})` : ""}`.trim(), !premium)}
+        {tabBtn("all", "Browse")}
+        {tabBtn("rising", rising.length ? `Rising (${rising.length})` : "Rising")}
+        {tabBtn("falling", falling.length ? `Falling (${falling.length})` : "Falling")}
       </div>
 
       {tab === "all" && (
@@ -913,7 +942,7 @@ export default function Catalog() {
                 </div>
               ))}
             </div>
-          ) : premium ? <MoverList list={rising} up={true} /> : <LockedMovers />}
+          ) : <MoverList list={rising} up={true} />}
         </div>
       )}
       {tab === "falling" && (
@@ -931,7 +960,7 @@ export default function Catalog() {
                 </div>
               ))}
             </div>
-          ) : premium ? <MoverList list={falling} up={false} /> : <LockedMovers />}
+          ) : <MoverList list={falling} up={false} />}
         </div>
       )}
 
