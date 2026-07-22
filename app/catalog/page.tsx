@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 type Category = "pet" | "egg" | "pet_wear";
-type Pet = { id: number; name: string; rarity: string | null; icon_url: string | null; value: number | null; category: Category };
+type Pet = { id: number; name: string; rarity: string | null; icon_url: string | null; value: number | null; category: Category; demand: number | null };
 type Mover = { pet_id: number; name: string; icon_url: string | null; current_value: number; change: number };
 
 // Graph access resolves per selected pet:
@@ -45,6 +45,14 @@ const DEFAULT_POTION = POTIONS[0];
 
 // Free users see the real top N movers; the rest sits behind the teaser.
 const FREE_MOVERS = 5;
+
+// Demand is scraped from AMVGG on a 1–3 scale (their max is 3 stars — the
+// distribution across all 756 rated pets tops out at 3, and the game's most
+// demanded pets sit there). Rendered as purple hearts. Pets with no rating
+// (demand null) simply show no hearts. Per-pet, not per-variant.
+const MAX_DEMAND = 3;
+// Word label per demand level (index by the demand value itself).
+const DEMAND_LABELS = ["", "Low", "Medium", "High"] as const;
 
 const RANGES = [
   { key: "day",   label: "Day",   days: 1 },
@@ -129,6 +137,50 @@ function LockIcon({ size = 12 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
     </svg>
+  );
+}
+
+// One heart of the demand row. Inline SVG (not emoji) so it takes the Galaxy
+// palette and renders identically across devices.
+function Heart({ filled, size }: { filled: boolean; size: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      style={
+        filled
+          ? { fill: "var(--violet)", filter: "drop-shadow(0 0 3px rgba(168,85,247,0.55))" }
+          : { fill: "rgba(168,139,250,0.14)" }
+      }
+    >
+      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+    </svg>
+  );
+}
+
+// Demand as a row of purple hearts (out of MAX_DEMAND). Renders nothing when
+// the pet has no rating yet — a missing rating isn't zero demand.
+function DemandHearts({ level, size = 11, showLabel = false }: { level: number | null; size?: number; showLabel?: boolean }) {
+  if (level == null) return null;
+  const filled = Math.max(0, Math.min(MAX_DEMAND, level));
+  return (
+    <span
+      className="inline-flex items-center gap-1"
+      role="img"
+      aria-label={`Demand ${filled} out of ${MAX_DEMAND}`}
+      title={`Demand: ${filled}/${MAX_DEMAND}`}
+    >
+      {showLabel && (
+        <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+          Demand
+        </span>
+      )}
+      {Array.from({ length: MAX_DEMAND }).map((_, i) => (
+        <Heart key={i} filled={i < filled} size={size} />
+      ))}
+    </span>
   );
 }
 
@@ -244,7 +296,7 @@ export default function Catalog() {
       while (true) {
         const { data, error } = await supabase
           .from("pets")
-          .select(`id, name, rarity, icon_url, category,
+          .select(`id, name, rarity, icon_url, category, demand,
             pet_variants!inner ( neon, fly, ride, current_pet_values ( value ) )`)
           .eq("category", category)
           .eq("pet_variants.neon", "normal")
@@ -262,6 +314,7 @@ export default function Catalog() {
       setPets(all.map((p: any) => ({
         id: p.id, name: p.name, rarity: p.rarity, icon_url: p.icon_url,
         category: (p.category ?? "pet") as Category,
+        demand: p.demand ?? null,
         value: p.pet_variants?.[0]?.current_pet_values?.[0]?.value ?? null,
       })));
       setLoading(false);
@@ -420,7 +473,9 @@ export default function Catalog() {
   }
 
   function openMover(m: Mover) {
-    openPet({ id: m.pet_id, name: m.name, rarity: null, icon_url: m.icon_url, value: m.current_value, category: "pet" });
+    // get_movers doesn't return demand, so a modal opened from Rising/Falling
+    // just shows no hearts — acceptable; the grid card is the demand surface.
+    openPet({ id: m.pet_id, name: m.name, rarity: null, icon_url: m.icon_url, value: m.current_value, category: "pet", demand: null });
   }
 
   const tabBtn = (key: typeof tab, label: string) => (
@@ -904,6 +959,11 @@ export default function Catalog() {
                       <div className="mt-1.5 font-bold text-[color:var(--lilac)] [font-family:var(--font-data)]">
                         {pet.value != null ? fmt(pet.value) : "\u2014"}
                       </div>
+                      {pet.demand != null && (
+                        <div className="mt-1.5 flex items-center justify-center">
+                          <DemandHearts level={pet.demand} size={11} showLabel />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1020,6 +1080,24 @@ export default function Catalog() {
                 &times;
               </button>
             </div>
+
+            {/* demand strip — big, labeled, impossible to miss */}
+            {selected.demand != null && (
+              <div
+                className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3"
+                style={{ background: "rgba(168,139,250,0.07)", border: "1px solid var(--line-2)" }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+                    Demand
+                  </span>
+                  <DemandHearts level={selected.demand} size={18} />
+                </div>
+                <span className="text-[13.5px] font-semibold text-[color:var(--lilac)] [font-family:var(--font-display)]">
+                  {DEMAND_LABELS[selected.demand]} demand &middot; {selected.demand}/{MAX_DEMAND}
+                </span>
+              </div>
+            )}
 
             {/* tier & potion pickers only make sense for pets — eggs and pet
                 wear have a single plain variant */}
