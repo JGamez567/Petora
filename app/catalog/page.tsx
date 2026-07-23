@@ -816,10 +816,18 @@ export default function Catalog() {
       {/* graph access strip — always tells the visitor what their plan gets */}
       <AccessStrip />
 
-      <div className="ptrm-reveal mt-6 mb-5 inline-flex rounded-[10px] bg-[rgba(168,139,250,0.07)] p-1" style={{ animationDelay: "60ms" }}>
-        {tabBtn("all", "Browse")}
-        {tabBtn("rising", rising.length ? `Rising (${rising.length})` : "Rising")}
-        {tabBtn("falling", falling.length ? `Falling (${falling.length})` : "Falling")}
+      <div className="ptrm-reveal mt-6 mb-5 flex flex-wrap items-center justify-between gap-3" style={{ animationDelay: "60ms" }}>
+        <div className="inline-flex rounded-[10px] bg-[rgba(168,139,250,0.07)] p-1">
+          {tabBtn("all", "Browse")}
+          {tabBtn("rising", rising.length ? `Rising (${rising.length})` : "Rising")}
+          {tabBtn("falling", falling.length ? `Falling (${falling.length})` : "Falling")}
+        </div>
+        <Link
+          href="/calculator"
+          className="inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-semibold text-[#1a1030] shadow-[0_6px_20px_-8px_rgba(168,85,247,0.7)] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+        >
+          <span aria-hidden="true">&#8644;</span> Trade Calculator
+        </Link>
       </div>
 
       {tab === "all" && (

@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 
 const LINKS: { href: string; label: string; soon?: boolean }[] = [
   { href: "/catalog", label: "Catalog" },
+  { href: "/calculator", label: "Calculator" },
   { href: "/portfolio", label: "My Portfolio" },
   { href: "/scan", label: "Scan" },
   { href: "/leaderboard", label: "Leaderboard" },
@@ -102,7 +103,7 @@ export default function Nav() {
         {email ? (
           <>
             <Link href="/settings" className={`hidden sm:inline-flex ${linkCls("/settings")}`}>
-              Roblox Verification
+              Settings
             </Link>
             <span className="hidden max-w-[170px] truncate text-[13px] text-[color:var(--muted)] xl:inline">
               {email}
@@ -173,7 +174,7 @@ export default function Nav() {
                 className={mobileLinkCls("/settings")}
                 onClick={() => setOpen(false)}
               >
-                Roblox Verification
+                Settings
               </Link>
               <span className="truncate px-4 py-1 text-[13px] text-[color:var(--muted)]">
                 {email}

@@ -11,7 +11,7 @@ export const metadata = {
 const steps = [
   {
     title: "Verify your Roblox account",
-    body: "Connect your Roblox account once so the leaderboard can prove the pets you submit are really yours. You'll only do this a single time — find it under Roblox Verification in the menu.",
+    body: "Connect your Roblox account once so the leaderboard can prove the pets you submit are really yours. You'll only do this a single time — go to Settings in the menu to get verified.",
     icon: (
       <>
         <path d="M12 3l7 4v5c0 4.4-3 7.4-7 9-4-1.6-7-4.6-7-9V7l7-4Z" />
