@@ -26,6 +26,7 @@ function SoonBadge() {
 
 export default function Nav() {
   const [email, setEmail] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [open, setOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -37,6 +38,19 @@ export default function Nav() {
     });
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // Ask the SERVER whether this account is an admin. The admin email list
+  // lives only in server env (ADMIN_EMAILS), so it never reaches the browser.
+  // This just controls whether the button renders — /admin re-checks for real.
+  useEffect(() => {
+    if (!email) { setIsAdmin(false); return; }
+    let cancelled = false;
+    fetch("/api/admin/check")
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setIsAdmin(!!d?.admin); })
+      .catch(() => { if (!cancelled) setIsAdmin(false); });
+    return () => { cancelled = true; };
+  }, [email]);
 
   // Close the mobile menu on navigation.
   useEffect(() => {
@@ -102,6 +116,17 @@ export default function Nav() {
       <div className="ml-auto hidden items-center gap-2.5 lg:flex">
         {email ? (
           <>
+            {isAdmin && (
+              <Link
+                href="/admin"
+                className="inline-flex items-center gap-1.5 rounded-[9px] border border-[rgba(245,200,120,0.45)] bg-[rgba(245,200,120,0.10)] px-3 py-1.5 text-[13px] font-semibold text-[#F5C878] transition hover:bg-[rgba(245,200,120,0.18)]"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 8l4.5 3L12 5l4.5 6L21 8l-1.8 9.2a1 1 0 0 1-1 .8H5.8a1 1 0 0 1-1-.8L3 8z" />
+                </svg>
+                Admin
+              </Link>
+            )}
             <Link href="/settings" className={`hidden sm:inline-flex ${linkCls("/settings")}`}>
               Settings
             </Link>
@@ -169,6 +194,18 @@ export default function Nav() {
 
           {email ? (
             <div className="flex flex-col gap-1">
+              {isAdmin && (
+                <Link
+                  href="/admin"
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2 rounded-[10px] border border-[rgba(245,200,120,0.45)] bg-[rgba(245,200,120,0.10)] px-4 py-3 text-[15px] font-semibold text-[#F5C878]"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 8l4.5 3L12 5l4.5 6L21 8l-1.8 9.2a1 1 0 0 1-1 .8H5.8a1 1 0 0 1-1-.8L3 8z" />
+                  </svg>
+                  Admin
+                </Link>
+              )}
               <Link
                 href="/settings"
                 className={mobileLinkCls("/settings")}
