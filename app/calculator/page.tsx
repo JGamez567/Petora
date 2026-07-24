@@ -429,21 +429,22 @@ export default function Calculator() {
       <div className="min-w-0 flex-1">
         <div className="petora-card overflow-hidden">
           {/* board header */}
-          <div className="flex items-center justify-between border-b border-[color:var(--line)] px-4 py-3">
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-[13px] font-bold uppercase tracking-wider text-[color:var(--text)] [font-family:var(--font-display)]">{title}</h2>
-              <span className="rounded-full border border-[color:var(--line-2)] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[color:var(--muted)]">
+          <div className="flex items-center justify-between gap-1 border-b border-[color:var(--line)] px-2.5 py-2 sm:px-4 sm:py-3">
+            <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
+              <h2 className="truncate text-[10.5px] font-bold uppercase tracking-wider text-[color:var(--text)] sm:text-[13px] [font-family:var(--font-display)]">{title}</h2>
+              <span className="flex-none rounded-full border border-[color:var(--line-2)] px-1.5 py-0.5 text-[9.5px] font-semibold tabular-nums text-[color:var(--muted)] sm:px-2 sm:text-[11px]">
                 {list.length}/{MAX_PER_SIDE}
               </span>
             </div>
-            <span className="text-lg font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]">
+            <span className="flex-none text-[14px] font-bold tabular-nums text-[color:var(--lilac)] sm:text-lg [font-family:var(--font-data)]">
               {fmt(display)}
             </span>
           </div>
 
-          {/* 3-wide grid; 3 full rows visible, scrolls beyond that */}
-          <div className="ptrc-scroll max-h-[380px] overflow-y-auto p-3">
-            <div className="grid grid-cols-3 gap-2">
+          {/* 3-wide grid — square tiles on mobile (icon + badges only, like the
+              in-game trade window), full detail cards on larger screens */}
+          <div className="ptrc-scroll max-h-[380px] overflow-y-auto p-1.5 sm:p-3">
+            <div className="grid grid-cols-3 gap-1 sm:gap-2">
               {Array.from({ length: cellCount }).map((_, i) => {
                 const entry = list[i];
                 if (entry) {
@@ -452,21 +453,22 @@ export default function Calculator() {
                       key={entry.uid}
                       onClick={() => removeItem(side, entry.uid)}
                       title={`${entry.item.name} (${variantLabel(entry.tier, entry.fly, entry.ride)}) — tap to remove`}
-                      className="ptrc-pop group relative h-[112px] rounded-xl border border-[color:var(--line-2)] p-1.5 transition hover:border-[color:var(--down)] hover:bg-[rgba(251,113,133,0.06)] active:scale-95"
+                      className="ptrc-pop group relative aspect-square rounded-lg border border-[color:var(--line-2)] p-1 transition hover:border-[color:var(--down)] hover:bg-[rgba(251,113,133,0.06)] active:scale-95 sm:aspect-auto sm:h-[112px] sm:rounded-xl sm:p-1.5"
                       style={{ background: "rgba(168,139,250,0.07)" }}
                     >
                       {entry.item.icon_url && (
-                        <img src={entry.item.icon_url} alt={entry.item.name} className="mx-auto h-11 w-11 object-contain transition-transform duration-200 group-hover:scale-90" loading="lazy" decoding="async" />
+                        <img src={entry.item.icon_url} alt={entry.item.name} className="mx-auto h-[58%] w-[58%] object-contain transition-transform duration-200 group-hover:scale-90 sm:h-11 sm:w-11" loading="lazy" decoding="async" />
                       )}
-                      <div className="-mt-2">
-                        <VariantBadges tier={entry.tier} fly={entry.fly} ride={entry.ride} size={18} />
+                      <div className="-mt-1 sm:-mt-2">
+                        <span className="sm:hidden"><VariantBadges tier={entry.tier} fly={entry.fly} ride={entry.ride} size={12} /></span>
+                        <span className="hidden sm:block"><VariantBadges tier={entry.tier} fly={entry.fly} ride={entry.ride} size={18} /></span>
                       </div>
-                      <div className="truncate text-center text-[10px] font-semibold leading-tight text-[color:var(--text)]">{entry.item.name}</div>
-                      <div className="text-center text-[11px] font-bold tabular-nums leading-tight text-[color:var(--lilac)] [font-family:var(--font-data)]">{fmt(entry.value)}</div>
-                      <div className="flex items-center justify-center">
+                      <div className="hidden truncate text-center text-[10px] font-semibold leading-tight text-[color:var(--text)] sm:block">{entry.item.name}</div>
+                      <div className="hidden text-center text-[11px] font-bold tabular-nums leading-tight text-[color:var(--lilac)] sm:block [font-family:var(--font-data)]">{fmt(entry.value)}</div>
+                      <div className="hidden items-center justify-center sm:flex">
                         <DemandHearts level={entry.item.demand} size={7} />
                       </div>
-                      <span className="absolute right-1 top-1 hidden h-4 w-4 place-items-center rounded-full bg-[color:var(--down)] text-[10px] font-bold leading-none text-white group-hover:grid" aria-hidden="true">×</span>
+                      <span className="absolute right-0.5 top-0.5 hidden h-4 w-4 place-items-center rounded-full bg-[color:var(--down)] text-[10px] font-bold leading-none text-white group-hover:grid sm:right-1 sm:top-1" aria-hidden="true">×</span>
                     </button>
                   );
                 }
@@ -477,7 +479,7 @@ export default function Calculator() {
                     onClick={() => isNext && openPicker(side)}
                     disabled={!isNext}
                     aria-label={isNext ? `Add a pet to ${title}` : undefined}
-                    className={`ptrc-slot h-[112px] rounded-xl border transition ${
+                    className={`ptrc-slot aspect-square rounded-lg border transition sm:aspect-auto sm:h-[112px] sm:rounded-xl ${
                       isNext
                         ? "ptrc-glow cursor-pointer border-[color:var(--violet)] bg-[rgba(168,85,247,0.10)] hover:bg-[rgba(168,85,247,0.16)] active:scale-95"
                         : "border-[color:var(--line-2)] bg-[rgba(168,139,250,0.05)]"
@@ -485,7 +487,7 @@ export default function Calculator() {
                     style={!isNext ? { boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)" } : undefined}
                   >
                     {isNext && (
-                      <span className="ptrc-plus grid h-full w-full place-items-center text-3xl font-light text-[color:var(--lilac)]">+</span>
+                      <span className="ptrc-plus grid h-full w-full place-items-center text-2xl font-light text-[color:var(--lilac)] sm:text-3xl">+</span>
                     )}
                   </button>
                 );
@@ -504,7 +506,7 @@ export default function Calculator() {
         onClick={onClick}
         disabled={disabled}
         aria-pressed={active}
-        className="rounded-full px-6 py-2.5 text-[15px] font-bold transition active:scale-95 disabled:opacity-35 [font-family:var(--font-display)]"
+        className="w-full rounded-full px-2 py-2 text-[13px] font-bold transition active:scale-95 disabled:opacity-35 sm:w-auto sm:px-6 sm:py-2.5 sm:text-[15px] [font-family:var(--font-display)]"
         style={
           active
             ? { background: bg, color: fg, boxShadow: `0 8px 22px -8px ${bg}` }
@@ -517,7 +519,7 @@ export default function Calculator() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
+    <main className="mx-auto max-w-5xl px-2 py-6 sm:px-6 sm:py-10">
       <style>{`
         @keyframes ptrcFade { from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:translateY(0)} }
         @keyframes ptrcPop { from{opacity:0; transform:scale(.85)} to{opacity:1; transform:scale(1)} }
@@ -556,15 +558,15 @@ export default function Calculator() {
       `}</style>
 
       {/* header */}
-      <div className="ptrc-reveal">
+      <div className="ptrc-reveal px-1 sm:px-0">
         <p className="petora-eyebrow">Trade smarter</p>
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">Trade Calculator</h1>
-          <Link href="/catalog" className="rounded-full border border-[color:var(--line-2)] px-4 py-1.5 text-[13px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-95">
+          <h1 className="text-[26px] font-bold text-[color:var(--text)] sm:text-3xl [font-family:var(--font-display)]">Trade Calculator</h1>
+          <Link href="/catalog" className="rounded-full border border-[color:var(--line-2)] px-3.5 py-1.5 text-[12.5px] font-semibold text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-95 sm:px-4 sm:text-[13px]">
             &larr; Back to catalog
           </Link>
         </div>
-        <p className="mt-2 max-w-2xl text-sm text-[color:var(--muted)]">
+        <p className="mt-2 max-w-2xl text-[13px] text-[color:var(--muted)] sm:text-sm">
           Most calculators only compare values. Petora&apos;s verdict weighs{" "}
           <span className="font-semibold text-[color:var(--text)]">value</span> <em>and</em>{" "}
           <span className="font-semibold text-[color:var(--text)]">demand</span> — because a trade
@@ -573,32 +575,32 @@ export default function Calculator() {
       </div>
 
       {/* verdict panel */}
-      <div className="petora-card ptrc-reveal mt-6 p-5" style={{ animationDelay: "60ms", borderColor: "var(--line-2)" }}>
-        <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="petora-card ptrc-reveal mt-5 p-3.5 sm:mt-6 sm:p-5" style={{ animationDelay: "60ms", borderColor: "var(--line-2)" }}>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-4">
           {/* you give */}
-          <div className="min-w-[110px] text-left">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">You give</div>
-            <div className="mt-0.5 text-2xl font-bold tabular-nums text-[color:var(--text)] [font-family:var(--font-data)]">{fmt(youDisplay)}</div>
-            {premium && <div className="text-[11px] tabular-nums text-[color:var(--muted)]">demand-adj. {fmt(Math.round(calc.youAdj))}</div>}
+          <div className="min-w-0 text-left">
+            <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You give</div>
+            <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(youDisplay)}</div>
+            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(Math.round(calc.youAdj))}</div>}
           </div>
           {/* verdict */}
-          <div className="flex-1 text-center">
+          <div className="text-center">
             <span
-              className="ptrc-verdict inline-block rounded-full border px-6 py-2 text-base font-bold [font-family:var(--font-display)]"
+              className="ptrc-verdict inline-block rounded-full border px-3 py-1.5 text-[12px] font-bold sm:px-6 sm:py-2 sm:text-base [font-family:var(--font-display)]"
               style={{ color: verdictColor, borderColor: verdictColor, background: "rgba(168,139,250,0.06)" }}
               aria-live="polite"
             >
               {verdictText}
             </span>
-            <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+            <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[11px]">
               {premium ? <>Value <span className="text-[color:var(--lilac)]">+</span> Demand <Heart filled size={9} /></> : "By value"}
             </p>
           </div>
           {/* you receive */}
-          <div className="min-w-[110px] text-right">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">You receive</div>
-            <div className="mt-0.5 text-2xl font-bold tabular-nums text-[color:var(--text)] [font-family:var(--font-data)]">{fmt(themDisplay)}</div>
-            {premium && <div className="text-[11px] tabular-nums text-[color:var(--muted)]">demand-adj. {fmt(Math.round(calc.themAdj))}</div>}
+          <div className="min-w-0 text-right">
+            <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You receive</div>
+            <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(themDisplay)}</div>
+            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(Math.round(calc.themAdj))}</div>}
           </div>
         </div>
 
@@ -723,12 +725,13 @@ export default function Calculator() {
         </div>
       </div>
 
-      {/* the two boards with a VS badge + value difference between */}
-      <div className="ptrc-reveal mt-6 flex flex-col items-stretch gap-4 sm:flex-row sm:gap-0" style={{ animationDelay: "120ms" }}>
+      {/* the two boards, always side by side (like the in-game trade window),
+          with VS + the value difference in the narrow middle column */}
+      <div className="ptrc-reveal mt-5 flex items-stretch sm:mt-6" style={{ animationDelay: "120ms" }}>
         {renderBoard("you", you, "Your offer", youDisplay)}
-        <div className="flex flex-row items-center justify-center gap-3 sm:flex-col sm:gap-2.5 sm:px-3">
+        <div className="flex flex-none flex-col items-center justify-center gap-1.5 px-1 sm:gap-2.5 sm:px-3">
           <span
-            className="grid h-11 w-11 flex-none place-items-center rounded-full border text-[13px] font-bold text-[#1a1030] shadow-[0_8px_24px_-8px_rgba(168,85,247,0.7)] [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+            className="grid h-8 w-8 flex-none place-items-center rounded-full border text-[10px] font-bold text-[#1a1030] shadow-[0_8px_24px_-8px_rgba(168,85,247,0.7)] sm:h-11 sm:w-11 sm:text-[13px] [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
             style={{ borderColor: "var(--line-2)" }}
             aria-hidden="true"
           >
@@ -739,19 +742,19 @@ export default function Calculator() {
             const diff = Math.round(calc.themRaw - calc.youRaw);
             if (diff === 0) {
               return (
-                <div className="text-center">
-                  <div className="text-lg font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]">0</div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Dead even</div>
+                <div className="w-[52px] text-center sm:w-auto">
+                  <div className="text-[13px] font-bold tabular-nums text-[color:var(--lilac)] sm:text-lg [font-family:var(--font-data)]">0</div>
+                  <div className="text-[8.5px] font-semibold uppercase leading-tight tracking-wider text-[color:var(--muted)] sm:text-[10px]">Dead even</div>
                 </div>
               );
             }
             const up = diff > 0;
             return (
-              <div className="text-center" aria-live="polite">
-                <div className="text-xl font-bold tabular-nums [font-family:var(--font-data)]" style={{ color: up ? "var(--up)" : "var(--down)" }}>
+              <div className="w-[52px] text-center sm:w-auto" aria-live="polite">
+                <div className="text-[13px] font-bold tabular-nums sm:text-xl [font-family:var(--font-data)]" style={{ color: up ? "var(--up)" : "var(--down)" }}>
                   {up ? "+" : "\u2212"}{fmt(Math.abs(diff))}
                 </div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: up ? "var(--up)" : "var(--down)" }}>
+                <div className="text-[8.5px] font-semibold uppercase leading-tight tracking-wider sm:text-[10px]" style={{ color: up ? "var(--up)" : "var(--down)" }}>
                   {up ? "They overpay" : "You overpay"}
                 </div>
               </div>
@@ -779,7 +782,7 @@ export default function Calculator() {
       )}
 
       {/* how the verdict works + attribution */}
-      <div className="petora-card ptrc-reveal mt-8 p-5 text-[13px] leading-relaxed text-[color:var(--muted)]" style={{ animationDelay: "180ms" }}>
+      <div className="petora-card ptrc-reveal mt-8 p-4 text-[13px] sm:p-5 leading-relaxed text-[color:var(--muted)]" style={{ animationDelay: "180ms" }}>
         <p className="mb-2 font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">Why value alone isn&apos;t enough</p>
         <p>
           A pet&apos;s value tells you what it&apos;s <em>listed</em> at. Demand tells you whether anyone
@@ -808,7 +811,7 @@ export default function Calculator() {
       {pickerSide && (
         <div
           onClick={closePicker}
-          className="ptrc-backdrop fixed inset-0 z-50 flex items-center justify-center p-5"
+          className="ptrc-backdrop fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-5"
           style={{ background: "rgba(5,3,12,0.72)", backdropFilter: "blur(4px)" }}
         >
           <div
@@ -816,7 +819,7 @@ export default function Calculator() {
             role="dialog"
             aria-modal="true"
             aria-label="Add pets to the trade"
-            className="petora-card ptrc-modal flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden p-5"
+            className="petora-card ptrc-modal flex h-[92vh] w-full max-w-3xl flex-col overflow-hidden p-3 sm:h-auto sm:max-h-[88vh] sm:p-5"
             style={{ borderColor: "var(--line-2)", boxShadow: "0 30px 80px -30px rgba(124,58,237,0.6)" }}
           >
             {/* header: side + live count + close */}
@@ -866,20 +869,20 @@ export default function Calculator() {
               placeholder={"Search\u2026 (sorted by value, highest first)"}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="mb-3 w-full rounded-lg border border-[color:var(--line)] bg-[color:var(--surface)] px-4 py-2.5 text-[15px] text-[color:var(--text)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--violet)] focus:shadow-[0_0_0_3px_rgba(168,85,247,0.15)]"
+              className="mb-2.5 w-full rounded-lg border border-[color:var(--line)] bg-[color:var(--surface)] px-3.5 py-2 text-[14.5px] sm:mb-3 sm:px-4 sm:py-2.5 sm:text-[15px] text-[color:var(--text)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--violet)] focus:shadow-[0_0_0_3px_rgba(168,85,247,0.15)]"
             />
 
             {/* tile grid — the whole catalog, biggest value first, infinite scroll */}
             <div ref={pickerScrollRef} onScroll={onPickerScroll} className="ptrc-scroll min-h-0 flex-1 overflow-y-auto pr-1">
               {catalogLoading ? (
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-                  {Array.from({ length: 10 }).map((_, i) => <Skel key={i} className="h-[108px] rounded-xl" />)}
+                <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5 sm:gap-2">
+                  {Array.from({ length: 10 }).map((_, i) => <Skel key={i} className="h-[104px] rounded-xl" />)}
                 </div>
               ) : pickerFiltered.length === 0 ? (
                 <p className="py-10 text-center text-[color:var(--muted)]">No matches — try a different name.</p>
               ) : (
                 <>
-                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                  <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5 sm:gap-2">
                     {pickerList.map((c) => {
                       const isFlash = flash?.id === c.id;
                       const isPending = pendingId === c.id;
@@ -922,19 +925,19 @@ export default function Calculator() {
             </div>
 
             {/* variant toggle bar — pick the variation, then tap pets to add it */}
-            <div className="mt-3 border-t border-[color:var(--line)] pt-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap gap-2">
+            <div className="mt-2.5 border-t border-[color:var(--line)] pt-2.5 sm:mt-3 sm:pt-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
                   {togglePill("Fly", selFly, () => setSelFly((v) => !v), pickCat !== "pet", BADGE_META.F.bg, BADGE_META.F.fg)}
                   {togglePill("Ride", selRide, () => setSelRide((v) => !v), pickCat !== "pet", BADGE_META.R.bg, BADGE_META.R.fg)}
                   {togglePill("Neon", selTier === "neon", () => setSelTier((t) => (t === "neon" ? "normal" : "neon")), pickCat !== "pet", BADGE_META.N.bg, BADGE_META.N.fg)}
                   {togglePill("Mega", selTier === "mega", () => setSelTier((t) => (t === "mega" ? "normal" : "mega")), pickCat !== "pet", BADGE_META.M.bg, BADGE_META.M.fg)}
                 </div>
-                <span className="text-[12px] font-semibold text-[color:var(--muted)]">
+                <span className="text-center text-[12px] font-semibold text-[color:var(--muted)] sm:text-right">
                   Adding as: <span className="text-[color:var(--lilac)]">{pickCat === "pet" ? variantLabel(selTier, selFly, selRide) : "Normal"}</span>
                 </span>
               </div>
-              <p className="mt-1.5 text-[11.5px] text-[color:var(--muted)]">
+              <p className="mt-1.5 hidden text-[11.5px] text-[color:var(--muted)] sm:block">
                 Toggle a variation, then tap pets to add them — keep tapping to build the whole offer. Tap &times; when you&apos;re done.
               </p>
             </div>
