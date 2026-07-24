@@ -37,10 +37,25 @@ const MIN_CELLS = 9;
 // a low-demand pet is worth less in the real trading market than its listed
 // value because it's harder to move. Unrated pets get no penalty — missing
 // data isn't low demand.
+//
+// These are trader heuristics, not measured market data. They're deliberately
+// firm: a 1-heart pet routinely sits in inventory for weeks, so treating it as
+// "worth 85% of list" was far too generous — it let a pile of junk read as a
+// fair swap for one clean, in-demand pet.
 const MAX_DEMAND = 3;
-const DEMAND_MULT: Record<number, number> = { 1: 0.85, 2: 0.95, 3: 1.0 };
+const DEMAND_MULT: Record<number, number> = { 1: 0.70, 2: 0.90, 3: 1.0 };
 const DEMAND_LABELS = ["", "Low", "Medium", "High"] as const;
 const demandMult = (d: number | null) => (d != null && DEMAND_MULT[d] != null ? DEMAND_MULT[d] : 1.0);
+
+// ── Offer shape ("many small pets for one big pet") ──────────────────────────
+// Independent of demand: a side stacking far more pets than the other is worth
+// less than its raw total, because the receiver ends up holding clutter and
+// gives up a clean 1-for-1. Traders expect multi-pet offers to overpay. Only
+// the side with MORE pets is penalized, 2% per extra pet, capped at 12%.
+const SPREAD_PER_PET = 0.02;
+const SPREAD_CAP = 0.12;
+const spreadFactor = (mine: number, theirs: number) =>
+  1 - Math.min(SPREAD_CAP, Math.max(0, mine - theirs) * SPREAD_PER_PET);
 
 // Verdict thresholds on the demand-adjusted totals: within ±FAIR_BAND = Fair.
 const FAIR_BAND = 0.05;
@@ -339,8 +354,13 @@ export default function Calculator() {
 
     const youRaw = sum(you);
     const themRaw = sum(them);
-    const youAdj = sumAdj(you);
-    const themAdj = sumAdj(them);
+
+    // demand weighting, then the offer-shape penalty on whichever side is
+    // stacking more pets
+    const youSpread = spreadFactor(you.length, them.length);
+    const themSpread = spreadFactor(them.length, you.length);
+    const youAdj = sumAdj(you) * youSpread;
+    const themAdj = sumAdj(them) * themSpread;
 
     const empty = you.length === 0 && them.length === 0;
 
@@ -360,22 +380,33 @@ export default function Calculator() {
     const meterPos = toPos(ratioAdj);      // demand-adjusted (Premium bar)
     const meterPosRaw = toPos(ratioRaw);   // raw value (free bar)
 
-    // demand note — only when demand actually moved the needle
+    // ── explain WHY the demand verdict differs from raw value ──────────────
     const lowIncoming = them.filter((i) => i.item.demand === 1).length;
     const lowOutgoing = you.filter((i) => i.item.demand === 1).length;
-    let demandNote: string | null = null;
+    const themStacking = them.length - you.length; // >0 → they're the multi-pet side
+    const reasons: string[] = [];
     if (!empty) {
-      if (rawVerdict !== verdict) {
-        if (rawVerdict === "win" && lowIncoming > 0) {
-          demandNote = `By raw value alone this is a Win for you — but ${lowIncoming === 1 ? "one of the pets" : `${lowIncoming} of the pets`} you'd receive ${lowIncoming === 1 ? "is" : "are"} low demand (hard to re-trade), which pulls the rating down to ${verdict === "fair" ? "Fair" : "a Lose"}.`;
-        } else if (rawVerdict === "lose" && lowOutgoing > 0) {
-          demandNote = `By raw value alone this is a Lose for you — but ${lowOutgoing === 1 ? "one of the pets" : `${lowOutgoing} of the pets`} you'd give away ${lowOutgoing === 1 ? "is" : "are"} low demand (hard to re-trade), which pulls the rating up to ${verdict === "fair" ? "Fair" : "a Win"}.`;
-        } else {
-          demandNote = "Demand ratings shifted this verdict compared to raw values alone.";
-        }
-      } else if (lowIncoming > 0 && (verdict === "win" || verdict === "fair")) {
-        demandNote = `Heads up: ${lowIncoming === 1 ? "one pet" : `${lowIncoming} pets`} on their side ${lowIncoming === 1 ? "is" : "are"} low demand — fine to keep, but harder to re-trade later.`;
+      if (lowIncoming > 0) {
+        reasons.push(`${lowIncoming} of the ${them.length} pet${them.length === 1 ? "" : "s"} you'd receive ${lowIncoming === 1 ? "is" : "are"} low demand (hard to re-trade)`);
       }
+      if (lowOutgoing > 0) {
+        reasons.push(`${lowOutgoing} of the pets you'd give away ${lowOutgoing === 1 ? "is" : "are"} low demand, which costs you less than the sticker price`);
+      }
+      if (themStacking >= 2) {
+        reasons.push(`they're sending ${them.length} pets for your ${you.length} — multi-pet offers are expected to overpay, since you're the one giving up a clean trade`);
+      } else if (themStacking <= -2) {
+        reasons.push(`you're sending ${you.length} pets for their ${them.length} — stacking small pets counts for a little less than the raw total`);
+      }
+    }
+
+    let demandNote: string | null = null;
+    if (!empty && reasons.length) {
+      const shift =
+        rawVerdict === verdict
+          ? null
+          : `${rawVerdict === "win" ? "A Win on raw value" : rawVerdict === "lose" ? "A Lose on raw value" : "A Fair trade on raw value"} becomes ${verdict === "win" ? "a Win" : verdict === "lose" ? "a Lose" : "Fair"} once demand is counted`;
+      const body = reasons.join("; and ");
+      demandNote = shift ? `${shift} — ${body}.` : `Worth knowing: ${body}.`;
     }
 
     return { youRaw, themRaw, youAdj, themAdj, ratioAdj, verdict, rawVerdict, meterPos, meterPosRaw, demandNote, empty };
@@ -792,11 +823,15 @@ export default function Calculator() {
         <p className="mt-2">
           So Petora shows two verdicts. The <span className="font-semibold text-[color:var(--text)]">Value bar</span> (free)
           compares raw listed values. The <span className="font-semibold text-[color:var(--lilac)]">Demand verdict</span>{" "}
-          (Premium) re-weighs every pet by its demand — High <span className="whitespace-nowrap">(<Heart filled size={10} /><Heart filled size={10} /><Heart filled size={10} />)</span>{" "}
-          counts in full, Medium ×0.95, Low ×0.85 — and tells you whether the trade <em>actually</em> wins,
-          with a plain-English explanation whenever demand changes the answer. Within ±5% is Fair
-          either way. It&apos;s the closest thing to how experienced traders actually think —
-          but it&apos;s still a guide, not a guarantee: the market is people, and people surprise you.
+          (Premium) re-weighs every pet by demand — High <span className="whitespace-nowrap">(<Heart filled size={10} /><Heart filled size={10} /><Heart filled size={10} />)</span>{" "}
+          counts in full, Medium ×0.90, Low ×0.70 — and then trims whichever side is stacking more
+          pets (2% per extra pet, max 12%), because a pile of small pets for one clean pet is worse
+          than the totals suggest. Within ±5% after all that is Fair.
+        </p>
+        <p className="mt-2">
+          Those weights are trader judgement, not measured data — they encode what most Adopt Me
+          traders already know: a 1-heart pet can sit in your inventory for weeks. Treat the verdict
+          as a strong second opinion, not a rule. The market is people, and people surprise you.
         </p>
         <p className="mt-3 border-t border-[color:var(--line)] pt-3">
           Pet values are sourced from{" "}
