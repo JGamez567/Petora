@@ -64,7 +64,10 @@ const FETCH_PAGE = 1000;
 // picker renders in slices as you scroll — keeps the DOM light with 750+ tiles
 const PICKER_PAGE = 48;
 
-const fmt = (n: number) => n.toLocaleString();
+// Values carry decimals (a Turtle is 22.5, not 23) — never round them away.
+// Up to 2 decimal places, trailing zeros dropped, thousands separated.
+const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const variantLabel = (tier: TierKey, fly: boolean, ride: boolean) => {
   const parts: string[] = [];
@@ -165,7 +168,7 @@ function useCountUp(target: number, duration = 500): number {
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - t, 3);
-      setDisplay(Math.round(from + (target - from) * eased));
+      setDisplay(round2(from + (target - from) * eased));
       if (t < 1) raf = requestAnimationFrame(tick);
       else fromRef.current = target;
     };
@@ -412,8 +415,8 @@ export default function Calculator() {
     return { youRaw, themRaw, youAdj, themAdj, ratioAdj, verdict, rawVerdict, meterPos, meterPosRaw, demandNote, empty };
   }, [you, them]);
 
-  const youDisplay = useCountUp(Math.round(calc.youRaw));
-  const themDisplay = useCountUp(Math.round(calc.themRaw));
+  const youDisplay = useCountUp(calc.youRaw);
+  const themDisplay = useCountUp(calc.themRaw);
 
   // Free users' headline verdict is VALUE-only; Premium's headline is the
   // demand-adjusted "true" verdict. (Showing free users the adjusted one
@@ -612,7 +615,7 @@ export default function Calculator() {
           <div className="min-w-0 text-left">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You give</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(youDisplay)}</div>
-            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(Math.round(calc.youAdj))}</div>}
+            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.youAdj))}</div>}
           </div>
           {/* verdict */}
           <div className="text-center">
@@ -631,7 +634,7 @@ export default function Calculator() {
           <div className="min-w-0 text-right">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You receive</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(themDisplay)}</div>
-            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(Math.round(calc.themAdj))}</div>}
+            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.themAdj))}</div>}
           </div>
         </div>
 
@@ -770,8 +773,8 @@ export default function Calculator() {
           </span>
           {!calc.empty && (() => {
             // raw value difference: + = they're overpaying you, − = you're overpaying them
-            const diff = Math.round(calc.themRaw - calc.youRaw);
-            if (diff === 0) {
+            const diff = round2(calc.themRaw - calc.youRaw);
+            if (Math.abs(diff) < 0.005) {
               return (
                 <div className="w-[52px] text-center sm:w-auto">
                   <div className="text-[13px] font-bold tabular-nums text-[color:var(--lilac)] sm:text-lg [font-family:var(--font-data)]">0</div>
