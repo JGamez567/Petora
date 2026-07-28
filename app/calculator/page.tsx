@@ -64,6 +64,12 @@ const FETCH_PAGE = 1000;
 // picker renders in slices as you scroll — keeps the DOM light with 750+ tiles
 const PICKER_PAGE = 48;
 
+// Free users get this many Demand-verdict reveals per day. The limit is now
+// enforced SERVER-SIDE (get_demand_status / spend_demand_check RPCs), tied to
+// the account so it can't be reset by switching browsers or clearing storage.
+// This constant is only a UI fallback label; the server is the source of truth.
+const FREE_DEMAND_PER_DAY = 3;
+
 // Values carry decimals (a Turtle is 22.5, not 23) — never round them away.
 // Up to 2 decimal places, trailing zeros dropped, thousands separated.
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -185,21 +191,28 @@ export default function Calculator() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
 
-  // premium gate for the Demand verdict bar (client-side, same model as the
-  // movers teaser — acceptable leak per the freemium gating approach)
+  // Demand-bar gate. The daily free-check limit is enforced SERVER-SIDE and
+  // read on load via get_demand_status(); revealing spends one via
+  // spend_demand_check(). remaining=null means unlimited (premium).
   const [premium, setPremium] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [demandRemaining, setDemandRemaining] = useState<number | null>(0); // null = unlimited
+  const [demandShown, setDemandShown] = useState(false); // revealed this session
+  const [revealBusy, setRevealBusy] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
       const uid = data.user?.id ?? null;
-      if (uid) {
-        const { data: prof } = await supabase
-          .from("profiles").select("is_premium").eq("id", uid).single();
-        setPremium(prof?.is_premium ?? false);
+      setUserId(uid);
+      const { data: status } = await supabase.rpc("get_demand_status");
+      if (status) {
+        setPremium(!!status.premium);
+        setDemandRemaining(status.premium ? null : (status.remaining ?? 0));
       }
       setAuthChecked(true);
-    });
+    })();
   }, []);
 
   const [you, setYou] = useState<CalcItem[]>([]);
@@ -220,6 +233,13 @@ export default function Calculator() {
   const [flash, setFlash] = useState<{ id: number; ok: boolean } | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickerScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Live value preview: when a variant is toggled, each visible tile should
+  // show THAT variant's value, not the Normal base. We fetch the toggled
+  // variant's values for the on-screen pets and cache them by pet id.
+  // Key = `${petId}|${tier}|${fly}|${ride}`.
+  const [variantValues, setVariantValues] = useState<Map<string, number | null>>(new Map());
+  const vkey = (id: number, t: TierKey, f: boolean, r: boolean) => `${id}|${t}|${f}|${r}`;
 
   // ── load the catalog once (paginated past the 1,000-row REST cap) ─────────
   // The sort key must be UNIQUE for .range() paging to be stable: this query
@@ -280,6 +300,43 @@ export default function Calculator() {
     pickerScrollRef.current?.scrollTo({ top: 0 });
   }, [search, pickCat]);
 
+  // When a variant is toggled (or new tiles scroll in), fetch that variant's
+  // value for the visible pets so each tile shows the price of what you'd
+  // actually add. Normal / No-Potion needs no fetch (it's the base value).
+  useEffect(() => {
+    if (!pickerSide || pickCat !== "pet") return;
+    if (selTier === "normal" && !selFly && !selRide) return; // base value already shown
+    const need = pickerListRef.current
+      .filter((c) => !variantValues.has(vkey(c.id, selTier, selFly, selRide)))
+      .map((c) => c.id);
+    if (need.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      // one query for all needed pets at this variant
+      const { data } = await supabase
+        .from("pet_variants")
+        .select("pet_id, current_pet_values ( value )")
+        .in("pet_id", need)
+        .eq("neon", selTier)
+        .eq("fly", selFly)
+        .eq("ride", selRide);
+      if (cancelled) return;
+      setVariantValues((prev) => {
+        const next = new Map(prev);
+        const got = new Set<number>();
+        for (const row of (data ?? []) as any[]) {
+          const v = row.current_pet_values?.[0]?.value;
+          next.set(vkey(row.pet_id, selTier, selFly, selRide), v == null ? null : Number(v));
+          got.add(row.pet_id);
+        }
+        // pets with no row at this variant → explicitly null (no value)
+        for (const id of need) if (!got.has(id)) next.set(vkey(id, selTier, selFly, selRide), null);
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [pickerSide, pickCat, selTier, selFly, selRide, pickerVisible, search]);
+
   function openPicker(side: "you" | "them") {
     setPickerSide(side);
     setSearch("");
@@ -316,8 +373,10 @@ export default function Calculator() {
     let value: number | null;
     if (!isPet || (t === "normal" && !f && !r)) {
       value = c.baseValue; // already loaded — instant
+    } else if (variantValues.has(vkey(c.id, t, f, r))) {
+      value = variantValues.get(vkey(c.id, t, f, r)) ?? null; // already fetched for the tile preview
     } else {
-      // fetch the exact variant's value
+      // not cached yet — fetch the exact variant's value
       setPendingId(c.id);
       const { data } = await supabase
         .from("pet_variants")
@@ -418,16 +477,43 @@ export default function Calculator() {
   const youDisplay = useCountUp(calc.youRaw);
   const themDisplay = useCountUp(calc.themRaw);
 
-  // Free users' headline verdict is VALUE-only; Premium's headline is the
-  // demand-adjusted "true" verdict. (Showing free users the adjusted one
-  // would give away exactly what the Premium bar sells.)
-  const headlineVerdict = premium ? calc.verdict : calc.rawVerdict;
+  // Headline verdict: VALUE-only until the demand bar is unlocked (premium, or
+  // a free user who spent a try), then it upgrades to the demand-adjusted
+  // "true" verdict. Showing the adjusted one before unlock would give away
+  // exactly what the reveal is for.
+  const headlineIsDemand = premium || demandShown;
+  const headlineVerdict = headlineIsDemand ? calc.verdict : calc.rawVerdict;
   const verdictColorOf = (v: "win" | "fair" | "lose") =>
     v === "win" ? "var(--up)" : v === "lose" ? "var(--down)" : "var(--lilac)";
   const verdictTextOf = (v: "win" | "fair" | "lose") =>
     v === "win" ? "WIN for you" : v === "lose" ? "LOSE for you" : "FAIR trade";
   const verdictColor = verdictColorOf(headlineVerdict);
   const verdictText = calc.empty ? "Add pets to both sides" : verdictTextOf(headlineVerdict);
+
+  // Demand-bar access. Premium sees it always (remaining === null). A free
+  // user reveals it by spending one server-side check; once revealed it stays
+  // visible for the session so they can keep tweaking the trade. The SERVER
+  // decides whether a spend is allowed — the client just calls and obeys.
+  const demandVisible = premium || demandShown;
+  // For the free-user UI (only rendered when !premium): a concrete number.
+  const freeRemaining = demandRemaining ?? 0;
+
+  async function revealDemand() {
+    if (premium || demandShown || revealBusy || calc.empty) return;
+    setRevealBusy(true);
+    try {
+      const { data, error } = await supabase.rpc("spend_demand_check");
+      if (!error && data?.allowed) {
+        setDemandShown(true);
+        setDemandRemaining(data.premium ? null : (data.remaining ?? 0));
+      } else if (data && !data.allowed) {
+        // server says no (limit hit on another device, etc.) — sync the count
+        setDemandRemaining(0);
+      }
+    } finally {
+      setRevealBusy(false);
+    }
+  }
 
   // Picker list: filtered, then sorted BIGGEST value first (no-value items
   // sink to the bottom). The whole catalog is reachable — tiles render in
@@ -440,6 +526,8 @@ export default function Calculator() {
     [catalog, pickCat, search]
   );
   const pickerList = pickerFiltered.slice(0, pickerVisible);
+  const pickerListRef = useRef<CatalogItem[]>([]);
+  pickerListRef.current = pickerList;
 
   // infinite scroll inside the picker: near the bottom → grow the slice
   function onPickerScroll(e: React.UIEvent<HTMLDivElement>) {
@@ -615,7 +703,7 @@ export default function Calculator() {
           <div className="min-w-0 text-left">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You give</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(youDisplay)}</div>
-            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.youAdj))}</div>}
+            {headlineIsDemand && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.youAdj))}</div>}
           </div>
           {/* verdict */}
           <div className="text-center">
@@ -627,14 +715,14 @@ export default function Calculator() {
               {verdictText}
             </span>
             <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[11px]">
-              {premium ? <>Value <span className="text-[color:var(--lilac)]">+</span> Demand <Heart filled size={9} /></> : "By value"}
+              {headlineIsDemand ? <>Value <span className="text-[color:var(--lilac)]">+</span> Demand <Heart filled size={9} /></> : "By value"}
             </p>
           </div>
           {/* you receive */}
           <div className="min-w-0 text-right">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You receive</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(themDisplay)}</div>
-            {premium && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.themAdj))}</div>}
+            {headlineIsDemand && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.themAdj))}</div>}
           </div>
         </div>
 
@@ -669,16 +757,22 @@ export default function Calculator() {
           </div>
         </div>
 
-        {/* ── DEMAND bar (Premium — the demand-adjusted "true" verdict) ── */}
+        {/* ── DEMAND bar (demand-adjusted "true" verdict) ── */}
         <div className="mt-5">
-          <div className="mb-1.5 flex items-center gap-2">
+          <div className="mb-1.5 flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[color:var(--lilac)]">
               Demand verdict <Heart filled size={10} />
-              <span className="rounded-full border border-[color:var(--line-2)] px-1.5 py-px text-[9px] font-bold tracking-wider text-[color:var(--lilac)]" style={{ background: "rgba(168,85,247,0.12)" }}>
-                Premium
-              </span>
             </span>
-            {premium && !calc.empty && (
+            {premium ? (
+              <span className="rounded-full border border-[color:var(--line-2)] px-1.5 py-px text-[9px] font-bold tracking-wider text-[color:var(--lilac)]" style={{ background: "rgba(168,85,247,0.12)" }}>
+                Premium · unlimited
+              </span>
+            ) : authChecked && userId ? (
+              <span className="rounded-full border border-[color:var(--line-2)] px-1.5 py-px text-[9px] font-bold tracking-wider text-[color:var(--muted)]">
+                {freeRemaining}/{FREE_DEMAND_PER_DAY} free today
+              </span>
+            ) : null}
+            {demandVisible && !calc.empty && (
               <>
                 <span className="text-[11px] text-[color:var(--muted)]" aria-hidden="true">&middot;</span>
                 <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: verdictColorOf(calc.verdict) }}>
@@ -690,7 +784,7 @@ export default function Calculator() {
 
           {!authChecked ? (
             <Skel className="h-[46px] w-full rounded-xl" />
-          ) : premium ? (
+          ) : demandVisible ? (
             <>
               <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
                 <span style={{ color: "#7C3AED" }}>Lose</span>
@@ -720,6 +814,14 @@ export default function Calculator() {
                   <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-[color:var(--text)]">{calc.demandNote}</p>
                 </div>
               )}
+              {!premium && (
+                <p className="mt-2 text-center text-[11.5px] text-[color:var(--muted)]">
+                  {freeRemaining > 0
+                    ? <>You have <span className="font-semibold text-[color:var(--lilac)]">{freeRemaining}</span> more demand check{freeRemaining === 1 ? "" : "s"} today · </>
+                    : <>That was your last free demand check today · </>}
+                  <Link href="/premium" className="font-semibold text-[color:var(--lilac)] underline underline-offset-2">go unlimited</Link>
+                </p>
+              )}
             </>
           ) : (
             <div className="relative overflow-hidden rounded-xl">
@@ -734,25 +836,49 @@ export default function Calculator() {
                   <span className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white" style={{ left: "62%", background: "#A855F7" }} />
                 </div>
               </div>
-              {/* lock overlay */}
+              {/* overlay: reveal button (free, has tries) OR upgrade (out / logged out) */}
               <div
-                className="absolute inset-0 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 text-center"
-                style={{ background: "linear-gradient(to bottom, rgba(10,6,20,0.35), rgba(10,6,20,0.65))" }}
+                className="absolute inset-0 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-4 text-center"
+                style={{ background: "linear-gradient(to bottom, rgba(10,6,20,0.4), rgba(10,6,20,0.7))" }}
               >
-                <span className="grid h-7 w-7 flex-none place-items-center rounded-lg text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.14)", border: "1px solid var(--line-2)" }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                  </svg>
-                </span>
-                <p className="text-[13px] font-semibold text-[color:var(--text)]">
-                  Does this trade <em>actually</em> win? The demand verdict knows.
-                </p>
-                <Link
-                  href="/premium"
-                  className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-[#1a1030] shadow-[0_8px_24px_-10px_rgba(168,85,247,0.8)] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
-                >
-                  Unlock with Premium
-                </Link>
+                {!userId ? (
+                  <>
+                    <p className="text-[13px] font-semibold text-[color:var(--text)]">Log in to check demand — 3 free checks a day.</p>
+                    <Link href="/login" className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-[#1a1030] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
+                      Log in
+                    </Link>
+                  </>
+                ) : freeRemaining > 0 ? (
+                  <>
+                    <p className="text-[13px] font-semibold text-[color:var(--text)]">
+                      Does this trade <em>actually</em> win? Check the demand verdict.
+                    </p>
+                    <button
+                      onClick={revealDemand}
+                      disabled={calc.empty || revealBusy}
+                      className="rounded-full px-5 py-1.5 text-[12.5px] font-semibold text-[#1a1030] shadow-[0_8px_24px_-10px_rgba(168,85,247,0.8)] transition hover:brightness-110 active:scale-95 disabled:opacity-40 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+                    >
+                      {revealBusy ? "Checking\u2026" : "Reveal demand verdict"}
+                    </button>
+                    <span className="w-full text-[11px] font-semibold text-[color:var(--lilac)]">
+                      {freeRemaining} of {FREE_DEMAND_PER_DAY} free checks left today
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="grid h-7 w-7 flex-none place-items-center rounded-lg text-[color:var(--lilac)]" style={{ background: "rgba(168,139,250,0.14)", border: "1px solid var(--line-2)" }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                      </svg>
+                    </span>
+                    <p className="text-[13px] font-semibold text-[color:var(--text)]">
+                      You&apos;ve used all {FREE_DEMAND_PER_DAY} free demand checks today.
+                    </p>
+                    <Link href="/premium" className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-[#1a1030] shadow-[0_8px_24px_-10px_rgba(168,85,247,0.8)] transition hover:brightness-110 active:scale-95 [background-image:var(--ramp-h)] [font-family:var(--font-display)]">
+                      Go unlimited with Premium
+                    </Link>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -815,33 +941,20 @@ export default function Calculator() {
         </div>
       )}
 
-      {/* how the verdict works + attribution */}
+      {/* why demand matters + attribution (kept short) */}
       <div className="petora-card ptrc-reveal mt-8 p-4 text-[13px] sm:p-5 leading-relaxed text-[color:var(--muted)]" style={{ animationDelay: "180ms" }}>
-        <p className="mb-2 font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">Why value alone isn&apos;t enough</p>
+        <p className="mb-2 font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">Why demand matters</p>
         <p>
-          A pet&apos;s value tells you what it&apos;s <em>listed</em> at. Demand tells you whether anyone
-          will actually give you that. Two trades can be identical on paper while one leaves you
-          with pets that fly out of your inventory and the other leaves you stuck for weeks.
+          A pet&apos;s value is what it&apos;s <em>listed</em> at. Demand is whether anyone will actually
+          give you that. Two trades can look identical on paper while one leaves you with pets that
+          fly out of your inventory and the other leaves you stuck for weeks — so the demand verdict
+          weighs both. It&apos;s a strong second opinion, not a guarantee.
         </p>
-        <p className="mt-2">
-          So Petora shows two verdicts. The <span className="font-semibold text-[color:var(--text)]">Value bar</span> (free)
-          compares raw listed values. The <span className="font-semibold text-[color:var(--lilac)]">Demand verdict</span>{" "}
-          (Premium) re-weighs every pet by demand — High <span className="whitespace-nowrap">(<Heart filled size={10} /><Heart filled size={10} /><Heart filled size={10} />)</span>{" "}
-          counts in full, Medium ×0.90, Low ×0.70 — and then trims whichever side is stacking more
-          pets (2% per extra pet, max 12%), because a pile of small pets for one clean pet is worse
-          than the totals suggest. Within ±5% after all that is Fair.
-        </p>
-        <p className="mt-2">
-          Those weights are trader judgement, not measured data — they encode what most Adopt Me
-          traders already know: a 1-heart pet can sit in your inventory for weeks. Treat the verdict
-          as a strong second opinion, not a rule. The market is people, and people surprise you.
-        </p>
-        <p className="mt-3 border-t border-[color:var(--line)] pt-3">
-          Pet values are sourced from{" "}
+        <p className="mt-3 border-t border-[color:var(--line)] pt-3 text-[12px]">
+          Values from{" "}
           <a href="https://elvebredd.com" target="_blank" rel="noopener noreferrer" className="font-semibold text-[color:var(--lilac)] underline decoration-[rgba(168,139,250,0.4)] underline-offset-2 hover:decoration-[color:var(--lilac)]">
             Elvebredd
-          </a>{" "}
-          and demand ratings from AMVGG. Petora is not affiliated with or endorsed by either site.
+          </a>, demand from AMVGG. Petora is not affiliated with either site.
         </p>
       </div>
 
@@ -924,6 +1037,14 @@ export default function Calculator() {
                     {pickerList.map((c) => {
                       const isFlash = flash?.id === c.id;
                       const isPending = pendingId === c.id;
+                      // value shown = the currently-toggled variant's value
+                      // (base value for Normal / non-pets, cached fetch otherwise)
+                      const isPet = c.category === "pet";
+                      const isBase = !isPet || (selTier === "normal" && !selFly && !selRide);
+                      const shownVal = isBase
+                        ? c.baseValue
+                        : variantValues.get(vkey(c.id, selTier, selFly, selRide));
+                      const valLoading = !isBase && shownVal === undefined;
                       return (
                         <button
                           key={c.id}
@@ -936,7 +1057,7 @@ export default function Calculator() {
                           {c.icon_url && <img src={c.icon_url} alt={c.name} className="mx-auto h-12 w-12 object-contain" loading="lazy" decoding="async" />}
                           <div className="mt-1 truncate text-[11px] font-semibold text-[color:var(--text)]">{c.name}</div>
                           <div className="text-[11px] font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]">
-                            {c.baseValue != null ? fmt(c.baseValue) : "\u2014"}
+                            {valLoading ? "\u2026" : shownVal != null ? fmt(shownVal) : "\u2014"}
                           </div>
                           <div className="flex items-center justify-center">
                             <DemandHearts level={c.demand} size={8} />

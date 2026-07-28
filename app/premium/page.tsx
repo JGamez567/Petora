@@ -37,8 +37,8 @@ const FEATURES: { title: string; desc: string; soon?: boolean; icon: ReactNode }
     ),
   },
   {
-    title: "Demand trade verdicts",
-    desc: "The Trade Calculator's second bar: every pet re-weighed by real demand, so you know if a trade actually wins — not just on paper. A win in value can still be a loss in pets nobody wants.",
+    title: "Unlimited demand verdicts",
+    desc: "The Trade Calculator's demand bar tells you if a trade actually wins — not just on paper. Free accounts get 3 demand checks a day; Premium never runs out.",
     icon: (
       <path d="M19.5 12.6 12 20l-7.5-7.4a5 5 0 1 1 7-7.1l.5.5.5-.5a5 5 0 1 1 7 7.1Z" />
     ),
@@ -87,7 +87,7 @@ const COMPARE: { label: string; free: string | boolean; premium: string | boolea
   { label: "Browse the live pet catalog", free: true, premium: true },
   { label: "Public leaderboard & verified rankings", free: true, premium: true },
   { label: "Trade Calculator — value verdict", free: true, premium: true },
-  { label: "Trade Calculator — demand verdict", free: false, premium: true },
+  { label: "Trade Calculator — demand verdict", free: "3 / day", premium: "Unlimited" },
   { label: "Pet value history graphs", free: "3 / day", premium: "Unlimited" },
   { label: "Daily scans", free: "2", premium: "10" },
   { label: "Rising & falling movers", free: false, premium: true },
@@ -249,9 +249,9 @@ export default function PremiumPage() {
           <span className="ptr-shimmer">Track. Grow. Dominate.</span>
         </h1>
         <p className="mx-auto mt-4 max-w-xl text-base text-[color:var(--muted)]">
-          Petora is free to use — Premium removes every limit. Unlimited value graphs, demand
-          verdicts that tell you if a trade <em>actually</em> wins, the movers list, and 5× the
-          daily scans.
+          Petora is free to use — Premium removes every limit. Unlimited value graphs, unlimited
+          demand verdicts that tell you if a trade <em>actually</em> wins, the movers list, and 5×
+          the daily scans.
         </p>
 
         <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
