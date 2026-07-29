@@ -13,7 +13,7 @@ type CatalogItem = {
   icon_url: string | null;
   category: Category;
   demand: number | null;
-  baseValue: number | null; // Normal / No-Potion value (picker display + sort)
+  baseValue: number | null; // Normal / No-Potion value (grid display + sort)
 };
 
 type TierKey = "normal" | "neon" | "mega";
@@ -37,21 +37,14 @@ const MIN_CELLS = 9;
 // a low-demand pet is worth less in the real trading market than its listed
 // value because it's harder to move. Unrated pets get no penalty — missing
 // data isn't low demand.
-//
-// These are trader heuristics, not measured market data. They're deliberately
-// firm: a 1-heart pet routinely sits in inventory for weeks, so treating it as
-// "worth 85% of list" was far too generous — it let a pile of junk read as a
-// fair swap for one clean, in-demand pet.
 const MAX_DEMAND = 3;
 const DEMAND_MULT: Record<number, number> = { 1: 0.70, 2: 0.90, 3: 1.0 };
 const DEMAND_LABELS = ["", "Low", "Medium", "High"] as const;
 const demandMult = (d: number | null) => (d != null && DEMAND_MULT[d] != null ? DEMAND_MULT[d] : 1.0);
 
 // ── Offer shape ("many small pets for one big pet") ──────────────────────────
-// Independent of demand: a side stacking far more pets than the other is worth
-// less than its raw total, because the receiver ends up holding clutter and
-// gives up a clean 1-for-1. Traders expect multi-pet offers to overpay. Only
-// the side with MORE pets is penalized, 2% per extra pet, capped at 12%.
+// Only the side with MORE pets is penalized, 2% per extra pet, capped at 12%.
+// NOTE: quantity counts here — adding 3 copies of a pet is 3 pets.
 const SPREAD_PER_PET = 0.02;
 const SPREAD_CAP = 0.12;
 const spreadFactor = (mine: number, theirs: number) =>
@@ -64,14 +57,13 @@ const FETCH_PAGE = 1000;
 // picker renders in slices as you scroll — keeps the DOM light with 750+ tiles
 const PICKER_PAGE = 48;
 
-// Free users get this many Demand-verdict reveals per day. The limit is now
+// Free users get this many Demand-verdict reveals per day. The limit is
 // enforced SERVER-SIDE (get_demand_status / spend_demand_check RPCs), tied to
 // the account so it can't be reset by switching browsers or clearing storage.
 // This constant is only a UI fallback label; the server is the source of truth.
 const FREE_DEMAND_PER_DAY = 3;
 
 // Values carry decimals (a Turtle is 22.5, not 23) — never round them away.
-// Up to 2 decimal places, trailing zeros dropped, thousands separated.
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -224,19 +216,21 @@ export default function Calculator() {
   const [search, setSearch] = useState("");
   const [pickCat, setPickCat] = useState<Category>("pet");
   const [pickerVisible, setPickerVisible] = useState(PICKER_PAGE);
-  // variant toggles (Elvebredd-style pills at the bottom of the picker)
-  const [selTier, setSelTier] = useState<TierKey>("normal");
-  const [selFly, setSelFly] = useState(false);
-  const [selRide, setSelRide] = useState(false);
-  // per-tile feedback
-  const [pendingId, setPendingId] = useState<number | null>(null);
-  const [flash, setFlash] = useState<{ id: number; ok: boolean } | null>(null);
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickerScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Live value preview: when a variant is toggled, each visible tile should
-  // show THAT variant's value, not the Normal base. We fetch the toggled
-  // variant's values for the on-screen pets and cache them by pet id.
+  // ── item-detail modal (tap a pet → choose variant + quantity → Select) ────
+  // Defaults to Fly & Ride on EVERY open (the most-traded form). This replaces
+  // the old persistent global toggle bar in the picker footer — deliberate
+  // product change, per the redesign.
+  const [detail, setDetail] = useState<CatalogItem | null>(null);
+  const [dTier, setDTier] = useState<TierKey>("normal");
+  const [dFly, setDFly] = useState(true);
+  const [dRide, setDRide] = useState(true);
+  const [dQty, setDQty] = useState(1);
+  // undefined = still resolving, null = no value exists for this variant
+  const [dValue, setDValue] = useState<number | null | undefined>(undefined);
+
+  // Cache of variant values so re-toggling back and forth doesn't refetch.
   // Key = `${petId}|${tier}|${fly}|${ride}`.
   const [variantValues, setVariantValues] = useState<Map<string, number | null>>(new Map());
   const vkey = (id: number, t: TierKey, f: boolean, r: boolean) => `${id}|${t}|${f}|${r}`;
@@ -284,15 +278,19 @@ export default function Calculator() {
     return () => { cancelled = true; };
   }, []);
 
-  // esc closes the picker; lock body scroll while it's open
+  // esc closes the detail modal first, then the picker; lock body scroll
   useEffect(() => {
     if (!pickerSide) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closePicker(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (detail) setDetail(null);
+      else closePicker();
+    };
     window.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
-  }, [pickerSide]);
+  }, [pickerSide, detail]);
 
   // search / category change → back to the first slice, scrolled to top
   useEffect(() => {
@@ -300,103 +298,94 @@ export default function Calculator() {
     pickerScrollRef.current?.scrollTo({ top: 0 });
   }, [search, pickCat]);
 
-  // When a variant is toggled (or new tiles scroll in), fetch that variant's
-  // value for the visible pets so each tile shows the price of what you'd
-  // actually add. Normal / No-Potion needs no fetch (it's the base value).
-  useEffect(() => {
-    if (!pickerSide || pickCat !== "pet") return;
-    if (selTier === "normal" && !selFly && !selRide) return; // base value already shown
-    const need = pickerListRef.current
-      .filter((c) => !variantValues.has(vkey(c.id, selTier, selFly, selRide)))
-      .map((c) => c.id);
-    if (need.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      // one query for all needed pets at this variant
-      const { data } = await supabase
-        .from("pet_variants")
-        .select("pet_id, current_pet_values ( value )")
-        .in("pet_id", need)
-        .eq("neon", selTier)
-        .eq("fly", selFly)
-        .eq("ride", selRide);
-      if (cancelled) return;
-      setVariantValues((prev) => {
-        const next = new Map(prev);
-        const got = new Set<number>();
-        for (const row of (data ?? []) as any[]) {
-          const v = row.current_pet_values?.[0]?.value;
-          next.set(vkey(row.pet_id, selTier, selFly, selRide), v == null ? null : Number(v));
-          got.add(row.pet_id);
-        }
-        // pets with no row at this variant → explicitly null (no value)
-        for (const id of need) if (!got.has(id)) next.set(vkey(id, selTier, selFly, selRide), null);
-        return next;
-      });
-    })();
-    return () => { cancelled = true; };
-  }, [pickerSide, pickCat, selTier, selFly, selRide, pickerVisible, search]);
+  const sideList = pickerSide === "you" ? you : them;
+  const slotsLeft = pickerSide == null ? 0 : MAX_PER_SIDE - sideList.length;
+  const sideFull = pickerSide != null && slotsLeft <= 0;
 
   function openPicker(side: "you" | "them") {
     setPickerSide(side);
     setSearch("");
     setPickerVisible(PICKER_PAGE);
-    // NOTE: selTier / selFly / selRide / pickCat deliberately NOT reset —
-    // the variant you toggled stays selected across both boxes and re-opens,
-    // so building a Mega Fly Ride offer on both sides doesn't mean re-toggling
-    // every time.
+    setDetail(null);
   }
   function closePicker() {
     setPickerSide(null);
-    setPendingId(null);
+    setDetail(null);
   }
 
-  const sideList = pickerSide === "you" ? you : them;
-  const sideFull = pickerSide != null && sideList.length >= MAX_PER_SIDE;
-
-  function showFlash(id: number, ok: boolean) {
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-    setFlash({ id, ok });
-    flashTimer.current = setTimeout(() => setFlash(null), 700);
-  }
-
-  // Quick-add: click a tile → the currently toggled variant is added.
-  // The modal STAYS OPEN so users can stack up a whole offer in one go.
-  async function quickAdd(c: CatalogItem) {
-    if (!pickerSide || sideFull || pendingId != null) return;
-
+  // Tap a tile → open the detail modal, defaulting to Fly & Ride for pets.
+  function openDetail(c: CatalogItem) {
+    if (sideFull) return;
     const isPet = c.category === "pet";
-    const t: TierKey = isPet ? selTier : "normal";
-    const f = isPet ? selFly : false;
-    const r = isPet ? selRide : false;
+    setDetail(c);
+    setDTier("normal");
+    setDFly(isPet);
+    setDRide(isPet);
+    setDQty(1);
+    setDValue(undefined);
+  }
 
-    let value: number | null;
-    if (!isPet || (t === "normal" && !f && !r)) {
-      value = c.baseValue; // already loaded — instant
-    } else if (variantValues.has(vkey(c.id, t, f, r))) {
-      value = variantValues.get(vkey(c.id, t, f, r)) ?? null; // already fetched for the tile preview
-    } else {
-      // not cached yet — fetch the exact variant's value
-      setPendingId(c.id);
+  // Resolve the value of the exact variant currently selected in the detail
+  // modal. Normal / No-Potion (and every non-pet) is already loaded as
+  // baseValue — no query needed.
+  useEffect(() => {
+    if (!detail) return;
+    const isPet = detail.category === "pet";
+    const t: TierKey = isPet ? dTier : "normal";
+    const f = isPet ? dFly : false;
+    const r = isPet ? dRide : false;
+
+    if (!isPet || (t === "normal" && !f && !r)) { setDValue(detail.baseValue); return; }
+    const k = vkey(detail.id, t, f, r);
+    if (variantValues.has(k)) { setDValue(variantValues.get(k) ?? null); return; }
+
+    let cancelled = false;
+    setDValue(undefined);
+    (async () => {
       const { data } = await supabase
         .from("pet_variants")
         .select("id, current_pet_values ( value )")
-        .eq("pet_id", c.id)
+        .eq("pet_id", detail.id)
         .eq("neon", t)
         .eq("fly", f)
         .eq("ride", r)
         .limit(1);
-      setPendingId(null);
-      const v = (data?.[0] as any)?.current_pet_values?.[0]?.value;
-      value = v == null ? null : Number(v);
-    }
+      if (cancelled) return;
+      const raw = (data?.[0] as any)?.current_pet_values?.[0]?.value;
+      const v = raw == null ? null : Number(raw);
+      setVariantValues((prev) => new Map(prev).set(k, v));
+      setDValue(v);
+    })();
+    return () => { cancelled = true; };
+  }, [detail, dTier, dFly, dRide]);
 
-    if (value == null) { showFlash(c.id, false); return; } // no value for this variant
+  // clamp quantity if the side fills up while the modal is open
+  useEffect(() => {
+    if (detail && dQty > Math.max(1, slotsLeft)) setDQty(Math.max(1, slotsLeft));
+  }, [detail, slotsLeft, dQty]);
 
-    const entry: CalcItem = { uid: uidRef.current++, item: c, tier: t, fly: f, ride: r, value };
-    if (pickerSide === "you") setYou((s) => (s.length < MAX_PER_SIDE ? [...s, entry] : s));
-    else setThem((s) => (s.length < MAX_PER_SIDE ? [...s, entry] : s));
-    showFlash(c.id, true);
+  // Select → add `dQty` copies, then TAB OUT of both modals. Adding another
+  // pet means pressing the + slot again (per the redesign).
+  function confirmSelect() {
+    if (!detail || !pickerSide || dValue == null || dValue === undefined) return;
+    const isPet = detail.category === "pet";
+    const t: TierKey = isPet ? dTier : "normal";
+    const f = isPet ? dFly : false;
+    const r = isPet ? dRide : false;
+
+    const room = MAX_PER_SIDE - sideList.length;
+    const n = Math.max(0, Math.min(dQty, room));
+    if (n === 0) return;
+
+    const entries: CalcItem[] = Array.from({ length: n }, () => ({
+      uid: uidRef.current++, item: detail, tier: t, fly: f, ride: r, value: dValue,
+    }));
+
+    if (pickerSide === "you") setYou((s) => [...s, ...entries].slice(0, MAX_PER_SIDE));
+    else setThem((s) => [...s, ...entries].slice(0, MAX_PER_SIDE));
+
+    setDetail(null);
+    setPickerSide(null);
   }
 
   function removeItem(side: "you" | "them", uid: number) {
@@ -417,8 +406,6 @@ export default function Calculator() {
     const youRaw = sum(you);
     const themRaw = sum(them);
 
-    // demand weighting, then the offer-shape penalty on whichever side is
-    // stacking more pets
     const youSpread = spreadFactor(you.length, them.length);
     const themSpread = spreadFactor(them.length, you.length);
     const youAdj = sumAdj(you) * youSpread;
@@ -442,10 +429,9 @@ export default function Calculator() {
     const meterPos = toPos(ratioAdj);      // demand-adjusted (Premium bar)
     const meterPosRaw = toPos(ratioRaw);   // raw value (free bar)
 
-    // ── explain WHY the demand verdict differs from raw value ──────────────
     const lowIncoming = them.filter((i) => i.item.demand === 1).length;
     const lowOutgoing = you.filter((i) => i.item.demand === 1).length;
-    const themStacking = them.length - you.length; // >0 → they're the multi-pet side
+    const themStacking = them.length - you.length;
     const reasons: string[] = [];
     if (!empty) {
       if (lowIncoming > 0) {
@@ -477,10 +463,7 @@ export default function Calculator() {
   const youDisplay = useCountUp(calc.youRaw);
   const themDisplay = useCountUp(calc.themRaw);
 
-  // Headline verdict: VALUE-only until the demand bar is unlocked (premium, or
-  // a free user who spent a try), then it upgrades to the demand-adjusted
-  // "true" verdict. Showing the adjusted one before unlock would give away
-  // exactly what the reveal is for.
+  // Headline verdict: VALUE-only until the demand bar is unlocked.
   const headlineIsDemand = premium || demandShown;
   const headlineVerdict = headlineIsDemand ? calc.verdict : calc.rawVerdict;
   const verdictColorOf = (v: "win" | "fair" | "lose") =>
@@ -490,12 +473,7 @@ export default function Calculator() {
   const verdictColor = verdictColorOf(headlineVerdict);
   const verdictText = calc.empty ? "Add pets to both sides" : verdictTextOf(headlineVerdict);
 
-  // Demand-bar access. Premium sees it always (remaining === null). A free
-  // user reveals it by spending one server-side check; once revealed it stays
-  // visible for the session so they can keep tweaking the trade. The SERVER
-  // decides whether a spend is allowed — the client just calls and obeys.
   const demandVisible = premium || demandShown;
-  // For the free-user UI (only rendered when !premium): a concrete number.
   const freeRemaining = demandRemaining ?? 0;
 
   async function revealDemand() {
@@ -507,7 +485,6 @@ export default function Calculator() {
         setDemandShown(true);
         setDemandRemaining(data.premium ? null : (data.remaining ?? 0));
       } else if (data && !data.allowed) {
-        // server says no (limit hit on another device, etc.) — sync the count
         setDemandRemaining(0);
       }
     } finally {
@@ -515,9 +492,7 @@ export default function Calculator() {
     }
   }
 
-  // Picker list: filtered, then sorted BIGGEST value first (no-value items
-  // sink to the bottom). The whole catalog is reachable — tiles render in
-  // slices of PICKER_PAGE as you scroll, so the DOM stays light.
+  // Picker list: filtered, then sorted BIGGEST value first.
   const pickerFiltered = useMemo(() =>
     catalog
       .filter((c) => c.category === pickCat)
@@ -526,10 +501,7 @@ export default function Calculator() {
     [catalog, pickCat, search]
   );
   const pickerList = pickerFiltered.slice(0, pickerVisible);
-  const pickerListRef = useRef<CatalogItem[]>([]);
-  pickerListRef.current = pickerList;
 
-  // infinite scroll inside the picker: near the bottom → grow the slice
   function onPickerScroll(e: React.UIEvent<HTMLDivElement>) {
     const el = e.currentTarget;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) {
@@ -538,19 +510,14 @@ export default function Calculator() {
   }
 
   // ── one side of the board (plain render function — NOT a nested component,
-  // so the scrollable board doesn't remount and lose scroll position on every
-  // state change) ───────────────────────────────────────────────────────────
+  // so the scrollable board doesn't remount and lose scroll position) ───────
   function renderBoard(side: "you" | "them", list: CalcItem[], title: string, display: number) {
     const canAdd = list.length < MAX_PER_SIDE;
-    // filled cells + one add-cell (if allowed); padded to at least 9 cells and
-    // always rounded UP to a complete row of 3 — the board never shows a
-    // ragged bottom row, it just grows 3 boxes at a time as pets are added.
     const rawCells = list.length + (canAdd ? 1 : 0);
     const cellCount = Math.max(MIN_CELLS, Math.ceil(rawCells / 3) * 3);
     return (
       <div className="min-w-0 flex-1">
         <div className="petora-card overflow-hidden">
-          {/* board header */}
           <div className="flex items-center justify-between gap-1 border-b border-[color:var(--line)] px-2.5 py-2 sm:px-4 sm:py-3">
             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
               <h2 className="truncate text-[10.5px] font-bold uppercase tracking-wider text-[color:var(--text)] sm:text-[13px] [font-family:var(--font-display)]">{title}</h2>
@@ -563,8 +530,6 @@ export default function Calculator() {
             </span>
           </div>
 
-          {/* 3-wide grid — square tiles on mobile (icon + badges only, like the
-              in-game trade window), full detail cards on larger screens */}
           <div className="ptrc-scroll max-h-[380px] overflow-y-auto p-1.5 sm:p-3">
             <div className="grid grid-cols-3 gap-1 sm:gap-2">
               {Array.from({ length: cellCount }).map((_, i) => {
@@ -621,24 +586,31 @@ export default function Calculator() {
     );
   }
 
-  // ── variant toggle pill (picker footer) — big + color-coded ───────────────
+  // ── variant toggle pill (detail modal) — big + color-coded ────────────────
   function togglePill(label: string, active: boolean, onClick: () => void, disabled: boolean, bg: string, fg: string) {
     return (
       <button
         onClick={onClick}
         disabled={disabled}
         aria-pressed={active}
-        className="w-full rounded-full px-2 py-2 text-[13px] font-bold transition active:scale-95 disabled:opacity-35 sm:w-auto sm:px-6 sm:py-2.5 sm:text-[15px] [font-family:var(--font-display)]"
+        title={label}
+        className="grid h-11 w-11 place-items-center rounded-full text-[15px] font-extrabold transition active:scale-90 disabled:opacity-30 sm:h-12 sm:w-12 sm:text-base [font-family:var(--font-display)]"
         style={
           active
             ? { background: bg, color: fg, boxShadow: `0 8px 22px -8px ${bg}` }
-            : { border: "1px solid var(--line-2)", color: "var(--muted)", background: "transparent" }
+            : { border: "1px solid var(--line-2)", color: "var(--muted)", background: "rgba(168,139,250,0.06)" }
         }
       >
         {label}
       </button>
     );
   }
+
+  const detailIsPet = detail?.category === "pet";
+  const detailVariant = detail
+    ? variantLabel(detailIsPet ? dTier : "normal", detailIsPet ? dFly : false, detailIsPet ? dRide : false)
+    : "";
+  const qtyMax = Math.max(1, Math.min(slotsLeft, MAX_PER_SIDE));
 
   return (
     <main className="mx-auto max-w-5xl px-2 py-6 sm:px-6 sm:py-10">
@@ -648,10 +620,10 @@ export default function Calculator() {
         @keyframes ptrcSkelShimmer { from{background-position:200% 0} to{background-position:-200% 0} }
         @keyframes ptrcBackdrop { from{opacity:0} to{opacity:1} }
         @keyframes ptrcModalIn { from{opacity:0; transform:translateY(16px) scale(.96)} to{opacity:1; transform:translateY(0) scale(1)} }
+        @keyframes ptrcDetailIn { from{opacity:0; transform:translateY(10px) scale(.92)} to{opacity:1; transform:translateY(0) scale(1)} }
         @keyframes ptrcPulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,0)} 50%{box-shadow:0 0 18px 2px rgba(168,85,247,0.35)} }
         @keyframes ptrcSlotGlow { 0%,100%{box-shadow:inset 0 0 0 0 rgba(168,85,247,0)} 50%{box-shadow:inset 0 0 16px 0 rgba(168,85,247,0.18)} }
-        @keyframes ptrcFlashOk { 0%{box-shadow:0 0 0 0 rgba(93,230,168,0.0)} 30%{box-shadow:0 0 0 3px rgba(93,230,168,0.8)} 100%{box-shadow:0 0 0 0 rgba(93,230,168,0)} }
-        @keyframes ptrcFlashBad { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 50%{transform:translateX(4px)} 75%{transform:translateX(-2px)} }
+        @keyframes ptrcFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
         .ptrc-reveal { opacity:0; animation: ptrcFade .45s cubic-bezier(.22,1,.36,1) forwards; }
         .ptrc-pop { animation: ptrcPop .25s cubic-bezier(.22,1,.36,1) both; }
         .ptrc-skel {
@@ -660,19 +632,19 @@ export default function Calculator() {
         }
         .ptrc-backdrop { animation: ptrcBackdrop .2s ease-out both; }
         .ptrc-modal { animation: ptrcModalIn .28s cubic-bezier(.22,1,.36,1) both; }
+        .ptrc-detail { animation: ptrcDetailIn .24s cubic-bezier(.22,1,.36,1) both; }
+        .ptrc-float { animation: ptrcFloat 3.2s ease-in-out infinite; }
         .ptrc-plus { transition: transform .2s ease; }
         .ptrc-slot:hover .ptrc-plus { transform: scale(1.25) rotate(90deg); }
         .ptrc-glow { animation: ptrcSlotGlow 2.6s ease-in-out infinite; }
         .ptrc-marker { transition: left .5s cubic-bezier(.22,1,.36,1); }
         .ptrc-verdict { animation: ptrcPulseGlow 2.4s ease-in-out infinite; }
-        .ptrc-flash-ok { animation: ptrcFlashOk .7s ease-out; }
-        .ptrc-flash-bad { animation: ptrcFlashBad .35s ease-in-out; }
         .ptrc-scroll { scrollbar-width: thin; scrollbar-color: rgba(168,139,250,0.35) transparent; }
         .ptrc-scroll::-webkit-scrollbar { width: 6px; }
         .ptrc-scroll::-webkit-scrollbar-thumb { background: rgba(168,139,250,0.3); border-radius: 999px; }
         @media (prefers-reduced-motion: reduce) {
-          .ptrc-reveal, .ptrc-pop, .ptrc-backdrop, .ptrc-modal, .ptrc-flash-ok, .ptrc-flash-bad { animation:none!important; opacity:1!important; transform:none!important; }
-          .ptrc-skel { animation:none!important; }
+          .ptrc-reveal, .ptrc-pop, .ptrc-backdrop, .ptrc-modal, .ptrc-detail { animation:none!important; opacity:1!important; transform:none!important; }
+          .ptrc-skel, .ptrc-float { animation:none!important; }
           .ptrc-marker { transition:none!important; }
           .ptrc-verdict, .ptrc-glow { animation:none!important; }
           .ptrc-plus, .ptrc-slot:hover .ptrc-plus { transition:none!important; transform:none!important; }
@@ -699,13 +671,11 @@ export default function Calculator() {
       {/* verdict panel */}
       <div className="petora-card ptrc-reveal mt-5 p-3.5 sm:mt-6 sm:p-5" style={{ animationDelay: "60ms", borderColor: "var(--line-2)" }}>
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-4">
-          {/* you give */}
           <div className="min-w-0 text-left">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You give</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(youDisplay)}</div>
             {headlineIsDemand && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.youAdj))}</div>}
           </div>
-          {/* verdict */}
           <div className="text-center">
             <span
               className="ptrc-verdict inline-block rounded-full border px-3 py-1.5 text-[12px] font-bold sm:px-6 sm:py-2 sm:text-base [font-family:var(--font-display)]"
@@ -718,7 +688,6 @@ export default function Calculator() {
               {headlineIsDemand ? <>Value <span className="text-[color:var(--lilac)]">+</span> Demand <Heart filled size={9} /></> : "By value"}
             </p>
           </div>
-          {/* you receive */}
           <div className="min-w-0 text-right">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You receive</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(themDisplay)}</div>
@@ -825,7 +794,6 @@ export default function Calculator() {
             </>
           ) : (
             <div className="relative overflow-hidden rounded-xl">
-              {/* blurred decoy bar — static, no real data */}
               <div className="pointer-events-none select-none blur-[6px] px-1 py-2" aria-hidden="true">
                 <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
                   <span style={{ color: "#7C3AED" }}>Lose</span>
@@ -836,7 +804,6 @@ export default function Calculator() {
                   <span className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white" style={{ left: "62%", background: "#A855F7" }} />
                 </div>
               </div>
-              {/* overlay: reveal button (free, has tries) OR upgrade (out / logged out) */}
               <div
                 className="absolute inset-0 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-4 text-center"
                 style={{ background: "linear-gradient(to bottom, rgba(10,6,20,0.4), rgba(10,6,20,0.7))" }}
@@ -885,8 +852,7 @@ export default function Calculator() {
         </div>
       </div>
 
-      {/* the two boards, always side by side (like the in-game trade window),
-          with VS + the value difference in the narrow middle column */}
+      {/* the two boards, always side by side (like the in-game trade window) */}
       <div className="ptrc-reveal mt-5 flex items-stretch sm:mt-6" style={{ animationDelay: "120ms" }}>
         {renderBoard("you", you, "Your offer", youDisplay)}
         <div className="flex flex-none flex-col items-center justify-center gap-1.5 px-1 sm:gap-2.5 sm:px-3">
@@ -898,7 +864,6 @@ export default function Calculator() {
             VS
           </span>
           {!calc.empty && (() => {
-            // raw value difference: + = they're overpaying you, − = you're overpaying them
             const diff = round2(calc.themRaw - calc.youRaw);
             if (Math.abs(diff) < 0.005) {
               return (
@@ -958,7 +923,7 @@ export default function Calculator() {
         </p>
       </div>
 
-      {/* ── picker modal (quick-add, stays open) ── */}
+      {/* ── picker modal (tap a pet → detail modal) ── */}
       {pickerSide && (
         <div
           onClick={closePicker}
@@ -969,7 +934,7 @@ export default function Calculator() {
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
-            aria-label="Add pets to the trade"
+            aria-label="Add a pet to the trade"
             className="petora-card ptrc-modal flex h-[92vh] w-full max-w-3xl flex-col overflow-hidden p-3 sm:h-auto sm:max-h-[88vh] sm:p-5"
             style={{ borderColor: "var(--line-2)", boxShadow: "0 30px 80px -30px rgba(124,58,237,0.6)" }}
           >
@@ -989,16 +954,16 @@ export default function Calculator() {
                   {sideList.length}/{MAX_PER_SIDE}
                 </span>
               </div>
-              <button onClick={closePicker} aria-label="Done — close" className="rounded-lg border border-[color:var(--line-2)] px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-90">&times;</button>
+              <button onClick={closePicker} aria-label="Close" className="rounded-lg border border-[color:var(--line-2)] px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-90">&times;</button>
             </div>
 
             {sideFull && (
               <div className="ptrc-pop mb-3 rounded-xl px-4 py-2.5 text-center text-[13px] font-semibold" style={{ background: "rgba(251,113,133,0.10)", border: "1px solid var(--down)", color: "var(--down)" }}>
-                Limit reached — {MAX_PER_SIDE} pets on this side. Remove some from the board, or close this to see the verdict.
+                Limit reached — {MAX_PER_SIDE} pets on this side. Remove some from the board first.
               </div>
             )}
 
-            {/* category pills + search */}
+            {/* category pills */}
             <div className="mb-3 flex flex-wrap gap-2">
               {([["pet", "Pets"], ["egg", "Eggs"], ["pet_wear", "Pet Wear"]] as [Category, string][]).map(([k, label]) => (
                 <button
@@ -1023,7 +988,7 @@ export default function Calculator() {
               className="mb-2.5 w-full rounded-lg border border-[color:var(--line)] bg-[color:var(--surface)] px-3.5 py-2 text-[14.5px] sm:mb-3 sm:px-4 sm:py-2.5 sm:text-[15px] text-[color:var(--text)] outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--violet)] focus:shadow-[0_0_0_3px_rgba(168,85,247,0.15)]"
             />
 
-            {/* tile grid — the whole catalog, biggest value first, infinite scroll */}
+            {/* tile grid — tap a tile to open its variant + quantity menu */}
             <div ref={pickerScrollRef} onScroll={onPickerScroll} className="ptrc-scroll min-h-0 flex-1 overflow-y-auto pr-1">
               {catalogLoading ? (
                 <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5 sm:gap-2">
@@ -1034,45 +999,23 @@ export default function Calculator() {
               ) : (
                 <>
                   <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5 sm:gap-2">
-                    {pickerList.map((c) => {
-                      const isFlash = flash?.id === c.id;
-                      const isPending = pendingId === c.id;
-                      // value shown = the currently-toggled variant's value
-                      // (base value for Normal / non-pets, cached fetch otherwise)
-                      const isPet = c.category === "pet";
-                      const isBase = !isPet || (selTier === "normal" && !selFly && !selRide);
-                      const shownVal = isBase
-                        ? c.baseValue
-                        : variantValues.get(vkey(c.id, selTier, selFly, selRide));
-                      const valLoading = !isBase && shownVal === undefined;
-                      return (
-                        <button
-                          key={c.id}
-                          onClick={() => quickAdd(c)}
-                          disabled={sideFull || (c.category !== "pet" && c.baseValue == null)}
-                          className={`relative rounded-xl border border-[color:var(--line)] p-2 text-center transition hover:border-[color:var(--violet)] hover:bg-[rgba(168,85,247,0.08)] active:scale-95 disabled:opacity-40 disabled:hover:border-[color:var(--line)] disabled:hover:bg-transparent ${
-                            isFlash ? (flash!.ok ? "ptrc-flash-ok" : "ptrc-flash-bad") : ""
-                          }`}
-                        >
-                          {c.icon_url && <img src={c.icon_url} alt={c.name} className="mx-auto h-12 w-12 object-contain" loading="lazy" decoding="async" />}
-                          <div className="mt-1 truncate text-[11px] font-semibold text-[color:var(--text)]">{c.name}</div>
-                          <div className="text-[11px] font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]">
-                            {valLoading ? "\u2026" : shownVal != null ? fmt(shownVal) : "\u2014"}
-                          </div>
-                          <div className="flex items-center justify-center">
-                            <DemandHearts level={c.demand} size={8} />
-                          </div>
-                          {isPending && (
-                            <span className="absolute inset-0 grid place-items-center rounded-xl" style={{ background: "rgba(10,6,20,0.45)" }}>
-                              <Skel className="h-4 w-10" />
-                            </span>
-                          )}
-                          {isFlash && flash!.ok && (
-                            <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full text-[11px] font-bold text-[#0a1a10]" style={{ background: "var(--up)" }} aria-hidden="true">✓</span>
-                          )}
-                        </button>
-                      );
-                    })}
+                    {pickerList.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => openDetail(c)}
+                        disabled={sideFull || (c.category !== "pet" && c.baseValue == null)}
+                        className="relative rounded-xl border border-[color:var(--line)] p-2 text-center transition hover:border-[color:var(--violet)] hover:bg-[rgba(168,85,247,0.08)] active:scale-95 disabled:opacity-40 disabled:hover:border-[color:var(--line)] disabled:hover:bg-transparent"
+                      >
+                        {c.icon_url && <img src={c.icon_url} alt={c.name} className="mx-auto h-12 w-12 object-contain" loading="lazy" decoding="async" />}
+                        <div className="mt-1 truncate text-[11px] font-semibold text-[color:var(--text)]">{c.name}</div>
+                        <div className="text-[11px] font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]">
+                          {c.baseValue != null ? fmt(c.baseValue) : "\u2014"}
+                        </div>
+                        <div className="flex items-center justify-center">
+                          <DemandHearts level={c.demand} size={8} />
+                        </div>
+                      </button>
+                    ))}
                   </div>
                   {pickerVisible < pickerFiltered.length && (
                     <p className="py-3 text-center text-[12px] text-[color:var(--muted)]">
@@ -1083,24 +1026,108 @@ export default function Calculator() {
               )}
             </div>
 
-            {/* variant toggle bar — pick the variation, then tap pets to add it */}
-            <div className="mt-2.5 border-t border-[color:var(--line)] pt-2.5 sm:mt-3 sm:pt-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <div className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
-                  {togglePill("Fly", selFly, () => setSelFly((v) => !v), pickCat !== "pet", BADGE_META.F.bg, BADGE_META.F.fg)}
-                  {togglePill("Ride", selRide, () => setSelRide((v) => !v), pickCat !== "pet", BADGE_META.R.bg, BADGE_META.R.fg)}
-                  {togglePill("Neon", selTier === "neon", () => setSelTier((t) => (t === "neon" ? "normal" : "neon")), pickCat !== "pet", BADGE_META.N.bg, BADGE_META.N.fg)}
-                  {togglePill("Mega", selTier === "mega", () => setSelTier((t) => (t === "mega" ? "normal" : "mega")), pickCat !== "pet", BADGE_META.M.bg, BADGE_META.M.fg)}
-                </div>
-                <span className="text-center text-[12px] font-semibold text-[color:var(--muted)] sm:text-right">
-                  Adding as: <span className="text-[color:var(--lilac)]">{pickCat === "pet" ? variantLabel(selTier, selFly, selRide) : "Normal"}</span>
-                </span>
-              </div>
-              <p className="mt-1.5 hidden text-[11.5px] text-[color:var(--muted)] sm:block">
-                Toggle a variation, then tap pets to add them — keep tapping to build the whole offer. Tap &times; when you&apos;re done.
-              </p>
-            </div>
+            <p className="mt-2.5 border-t border-[color:var(--line)] pt-2.5 text-center text-[11.5px] text-[color:var(--muted)] sm:mt-3 sm:pt-3">
+              Tap a pet to pick its variation and how many. Values shown are Normal / No-Potion.
+            </p>
           </div>
+
+          {/* ── item detail: variant + quantity + Select ── */}
+          {detail && (
+            <div
+              onClick={(e) => { e.stopPropagation(); setDetail(null); }}
+              className="ptrc-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4"
+              style={{ background: "rgba(5,3,12,0.62)", backdropFilter: "blur(3px)" }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Add ${detail.name}`}
+                className="petora-card ptrc-detail relative w-full max-w-[400px] px-5 pb-5 pt-10 text-center sm:px-7 sm:pb-7"
+                style={{ borderColor: "var(--line-2)", boxShadow: "0 30px 80px -24px rgba(124,58,237,0.75)" }}
+              >
+                <button
+                  onClick={() => setDetail(null)}
+                  aria-label="Cancel"
+                  className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-xl text-[17px] font-bold text-white transition hover:brightness-110 active:scale-90"
+                  style={{ background: "var(--down)" }}
+                >
+                  &times;
+                </button>
+
+                {/* icon + live value badge */}
+                <div className="relative mx-auto h-[120px] w-[120px] sm:h-[136px] sm:w-[136px]">
+                  {detail.icon_url && (
+                    <img src={detail.icon_url} alt={detail.name} className="ptrc-float h-full w-full object-contain" decoding="async" />
+                  )}
+                  <span
+                    className="absolute bottom-0 right-0 min-w-[42px] rounded-full border px-2 py-1 text-[12.5px] font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]"
+                    style={{ background: "var(--surface-2)", borderColor: "var(--line-2)" }}
+                    aria-live="polite"
+                  >
+                    {dValue === undefined ? "\u2026" : dValue == null ? "\u2014" : fmt(dValue)}
+                  </span>
+                </div>
+
+                <h3 className="mt-2 text-[22px] font-bold leading-tight text-[color:var(--text)] sm:text-2xl [font-family:var(--font-display)]">
+                  {detail.name}
+                </h3>
+                <div className="mt-1 flex items-center justify-center gap-2">
+                  <span className="text-[12px] font-semibold text-[color:var(--lilac)]">{detailVariant}</span>
+                  <DemandHearts level={detail.demand} size={10} />
+                </div>
+
+                {/* variant toggles — default Fly & Ride, pets only */}
+                {detailIsPet ? (
+                  <div className="mt-4 inline-flex items-center gap-2 rounded-full p-1.5" style={{ background: "rgba(168,139,250,0.07)", border: "1px solid var(--line)" }}>
+                    {togglePill("F", dFly, () => setDFly((v) => !v), false, BADGE_META.F.bg, BADGE_META.F.fg)}
+                    {togglePill("R", dRide, () => setDRide((v) => !v), false, BADGE_META.R.bg, BADGE_META.R.fg)}
+                    {togglePill("N", dTier === "neon", () => setDTier((t) => (t === "neon" ? "normal" : "neon")), false, BADGE_META.N.bg, BADGE_META.N.fg)}
+                    {togglePill("M", dTier === "mega", () => setDTier((t) => (t === "mega" ? "normal" : "mega")), false, BADGE_META.M.bg, BADGE_META.M.fg)}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-[12px] text-[color:var(--muted)]">No variations for this item.</p>
+                )}
+
+                {/* quantity — capped at the slots left on this side */}
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <label htmlFor="ptrc-qty" className="text-[12px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Qty</label>
+                  <select
+                    id="ptrc-qty"
+                    value={dQty}
+                    onChange={(e) => setDQty(Number(e.target.value))}
+                    className="rounded-lg border border-[color:var(--line-2)] bg-[color:var(--surface)] px-3 py-2 text-[15px] font-bold tabular-nums text-[color:var(--text)] outline-none transition focus:border-[color:var(--violet)]"
+                  >
+                    {Array.from({ length: qtyMax }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <span className="text-[11.5px] text-[color:var(--muted)]">{slotsLeft} slot{slotsLeft === 1 ? "" : "s"} left</span>
+                </div>
+
+                {dValue === null && (
+                  <p className="mt-3 text-[12.5px] font-semibold" style={{ color: "var(--down)" }}>
+                    No value listed for {detailVariant} — try another variation.
+                  </p>
+                )}
+
+                <button
+                  onClick={confirmSelect}
+                  disabled={dValue == null || dValue === undefined || slotsLeft <= 0}
+                  className="mt-5 w-full rounded-xl px-6 py-3 text-[15px] font-bold text-[#1a1030] shadow-[0_10px_30px_-12px_rgba(168,85,247,0.9)] transition hover:brightness-110 active:scale-95 disabled:opacity-35 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
+                >
+                  {dValue === undefined
+                    ? "Checking value\u2026"
+                    : dQty > 1
+                      ? `Select ${dQty} \u00b7 ${dValue == null ? "\u2014" : fmt(dValue * dQty)}`
+                      : "Select"}
+                </button>
+                <p className="mt-2 text-[11px] text-[color:var(--muted)]">
+                  Adds to <span className="font-semibold text-[color:var(--text)]">{pickerSide === "you" ? "your offer" : "their offer"}</span> and closes — tap a <span className="font-semibold text-[color:var(--lilac)]">+</span> slot for the next pet.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </main>
