@@ -46,6 +46,40 @@ const features = [
   },
 ];
 
+// ── The two headline destinations. These sit ABOVE everything else on the page
+// (right under the hero) because they're what most visitors actually came for:
+// look up a value, or check a trade. Everything below is the pitch. ──────────
+const quickLinks = [
+  {
+    href: "/calculator",
+    eyebrow: "Check a trade",
+    title: "Trade Calculator",
+    body: "Win, Fair or Lose — weighed by value AND demand, so a trade that looks good on paper can't fool you.",
+    cta: "Open the calculator",
+    tint: "168,85,247",
+    icon: (
+      <>
+        <path d="M4 7h7M7.5 4v6M13 17h7M16.5 14v6" />
+        <path d="M3 21 21 3" />
+      </>
+    ),
+  },
+  {
+    href: "/catalog",
+    eyebrow: "Look up a value",
+    title: "Value Catalog",
+    body: "Every pet, egg and pet wear with live values, demand ratings, and Rising / Falling movers.",
+    cta: "Browse the catalog",
+    tint: "56,189,248",
+    icon: (
+      <>
+        <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2h6.5A1.5 1.5 0 0 1 20 7.5v11A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5Z" />
+        <path d="M8 13h8M8 16.5h5" />
+      </>
+    ),
+  },
+];
+
 function Sparkle({ className = "", style }: { className?: string; style?: CSSProperties }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className} style={style} aria-hidden="true">
@@ -178,6 +212,16 @@ export default function Home() {
     return () => io.disconnect();
   }, [rows.length, boardLoading]);
 
+  // Pointer-follow highlight for the quick-link cards: we write the cursor
+  // position into CSS vars and let a radial-gradient layer track it. Cheap
+  // (no re-render) and skipped entirely on touch + reduced motion.
+  function onCardMove(e: React.MouseEvent<HTMLAnchorElement>) {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${e.clientX - r.left}px`);
+    el.style.setProperty("--my", `${e.clientY - r.top}px`);
+  }
+
   async function logout() {
     await supabase.auth.signOut();
     router.refresh();
@@ -200,6 +244,15 @@ export default function Home() {
         @keyframes ptrPulse { 0%,100%{r:4.5;opacity:1} 50%{r:7;opacity:.55} }
         @keyframes ptrGlow { 0%,100%{opacity:.30;transform:scale(1)} 50%{opacity:.55;transform:scale(1.1)} }
         @keyframes ptrSkelShimmer { from{background-position:200% 0} to{background-position:-200% 0} }
+        @keyframes ptrAurora {
+          0%   { transform: translate3d(0,0,0) scale(1); }
+          33%  { transform: translate3d(6%,-4%,0) scale(1.14); }
+          66%  { transform: translate3d(-5%,5%,0) scale(.94); }
+          100% { transform: translate3d(0,0,0) scale(1); }
+        }
+        @keyframes ptrOrbit { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+        @keyframes ptrSweep { 0%{transform:translateX(-120%) skewX(-18deg)} 100%{transform:translateX(320%) skewX(-18deg)} }
+        @keyframes ptrBlink { 0%,45%{opacity:1} 55%,100%{opacity:.25} }
         .ptr-fade { opacity:0; animation: ptrFadeUp .7s cubic-bezier(.2,.7,.2,1) forwards; }
         .ptr-twinkle { animation: ptrTwinkle 3.4s ease-in-out infinite; }
         .ptr-float { animation: ptrFloat 6.5s ease-in-out infinite; }
@@ -211,6 +264,9 @@ export default function Home() {
         .ptr-draw { stroke-dasharray:620; stroke-dashoffset:620; animation: ptrDraw 1.9s ease-out .35s forwards; }
         .ptr-pulse { animation: ptrPulse 2.4s ease-in-out infinite; }
         .ptr-glow { animation: ptrGlow 8s ease-in-out infinite; }
+        .ptr-aurora { animation: ptrAurora 22s ease-in-out infinite; will-change: transform; }
+        .ptr-orbit { animation: ptrOrbit 26s linear infinite; }
+        .ptr-blink { animation: ptrBlink 2.2s ease-in-out infinite; }
         .ptr-skel {
           background: linear-gradient(90deg,
             rgba(168,139,250,0.07) 25%,
@@ -227,9 +283,38 @@ export default function Home() {
         .ptr-cta:active { transform:translateY(0) scale(.97); }
         .ptr-cta .ptr-arrow { display:inline-block; transition: transform .2s ease; }
         .ptr-cta:hover .ptr-arrow { transform: translateX(3px); }
+
+        /* ── quick-link destination cards ── */
+        .ptr-quick {
+          position:relative; overflow:hidden; isolation:isolate;
+          transition: transform .28s cubic-bezier(.22,1,.36,1), border-color .28s ease, box-shadow .28s ease;
+        }
+        .ptr-quick:hover { transform: translateY(-5px); }
+        .ptr-quick:active { transform: translateY(-1px) scale(.99); }
+        /* cursor-following tint */
+        .ptr-quick::before {
+          content:""; position:absolute; inset:0; z-index:-1; opacity:0;
+          transition: opacity .3s ease;
+          background: radial-gradient(340px circle at var(--mx,50%) var(--my,50%),
+            rgba(var(--tint),0.20), transparent 65%);
+        }
+        .ptr-quick:hover::before { opacity:1; }
+        /* light sweep across the card */
+        .ptr-quick .ptr-sweep {
+          position:absolute; inset:0 auto 0 0; width:38%; z-index:-1; pointer-events:none;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.09), transparent);
+          transform: translateX(-120%) skewX(-18deg); opacity:0;
+        }
+        .ptr-quick:hover .ptr-sweep { opacity:1; animation: ptrSweep 1.05s ease-out; }
+        .ptr-quick .ptr-qicon { transition: transform .32s cubic-bezier(.22,1,.36,1); }
+        .ptr-quick:hover .ptr-qicon { transform: translateY(-2px) rotate(-7deg) scale(1.1); }
+        .ptr-quick .ptr-arrow { display:inline-block; transition: transform .22s ease; }
+        .ptr-quick:hover .ptr-arrow { transform: translateX(4px); }
+
         @media (prefers-reduced-motion: reduce) {
-          .ptr-fade,.ptr-twinkle,.ptr-float,.ptr-shimmer,.ptr-draw,.ptr-pulse,.ptr-glow {
-            animation:none!important; opacity:1!important;
+          .ptr-fade,.ptr-twinkle,.ptr-float,.ptr-shimmer,.ptr-draw,.ptr-pulse,.ptr-glow,
+          .ptr-aurora,.ptr-orbit,.ptr-blink {
+            animation:none!important; opacity:1!important; transform:none!important;
           }
           .ptr-skel { animation:none!important; }
           .ptr-shimmer { color:var(--lilac)!important; }
@@ -237,15 +322,33 @@ export default function Home() {
           .ptr-sr { opacity:1!important; transform:none!important; transition:none!important; }
           .ptr-cta, .ptr-cta:hover, .ptr-cta:active { transform:none!important; transition:none!important; }
           .ptr-cta .ptr-arrow { transition:none!important; transform:none!important; }
+          .ptr-quick, .ptr-quick:hover, .ptr-quick:active { transform:none!important; transition:none!important; }
+          .ptr-quick::before { display:none!important; }
+          .ptr-quick .ptr-sweep { display:none!important; }
+          .ptr-quick .ptr-qicon, .ptr-quick:hover .ptr-qicon { transform:none!important; transition:none!important; }
+          .ptr-quick .ptr-arrow, .ptr-quick:hover .ptr-arrow { transform:none!important; transition:none!important; }
+        }
+        @media (hover: none) {
+          .ptr-quick::before { display:none; }
+          .ptr-quick .ptr-sweep { display:none; }
         }
       `}</style>
 
-      {/* soft drifting glow behind the hero */}
-      <div
-        className="ptr-glow pointer-events-none absolute -top-24 left-1/4 h-72 w-72 rounded-full"
-        style={{ background: "radial-gradient(circle, rgba(168,85,247,0.22), transparent 70%)" }}
-        aria-hidden="true"
-      />
+      {/* drifting aurora backdrop behind the hero — three slow blobs */}
+      <div className="pointer-events-none absolute inset-x-0 -top-32 h-[560px] overflow-hidden" aria-hidden="true">
+        <div
+          className="ptr-aurora absolute left-[8%] top-0 h-80 w-80 rounded-full blur-[10px]"
+          style={{ background: "radial-gradient(circle, rgba(168,85,247,0.22), transparent 70%)" }}
+        />
+        <div
+          className="ptr-aurora absolute right-[6%] top-16 h-72 w-72 rounded-full blur-[10px]"
+          style={{ background: "radial-gradient(circle, rgba(56,189,248,0.14), transparent 70%)", animationDelay: "-7s", animationDuration: "26s" }}
+        />
+        <div
+          className="ptr-aurora absolute left-[42%] top-40 h-64 w-64 rounded-full blur-[10px]"
+          style={{ background: "radial-gradient(circle, rgba(196,181,253,0.16), transparent 70%)", animationDelay: "-14s", animationDuration: "30s" }}
+        />
+      </div>
 
       {/* hero */}
       <section className="relative grid items-center gap-10 md:grid-cols-[1.05fr_0.95fr]">
@@ -263,7 +366,7 @@ export default function Home() {
           </h1>
           <p className="mt-5 max-w-md text-[16px] leading-relaxed text-[color:var(--muted)]">
             Petora scans your Adopt Me profile, values every pet from live market data, and ranks you
-            against verified traders. One screenshot and you're on the board.
+            against verified traders. One screenshot and you&apos;re on the board.
           </p>
           <div className="mt-8 min-h-[52px]">
             {authReady && (
@@ -319,10 +422,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* right column: live trader card + stat chips (fills the column so it
-            balances the tall text side on desktop) */}
+        {/* right column: live trader card + stat chips */}
         <div className="flex flex-col gap-4">
           <div className="ptr-fade ptr-float petora-card relative overflow-hidden p-7" style={{ animationDelay: "140ms", borderColor: "var(--line-2)", boxShadow: "0 24px 60px -30px rgba(124,58,237,0.55)" }}>
+            {/* slow orbiting sparkle ring */}
+            <div className="ptr-orbit pointer-events-none absolute -right-20 -top-20 h-56 w-56" aria-hidden="true">
+              <Sparkle className="absolute left-1/2 top-0 h-2.5 w-2.5 -translate-x-1/2 text-[color:var(--lilac)] opacity-70" />
+              <Sparkle className="absolute bottom-0 left-1/2 h-2 w-2 -translate-x-1/2 text-[#C4B5FD] opacity-50" />
+              <Sparkle className="absolute left-0 top-1/2 h-1.5 w-1.5 -translate-y-1/2 text-[#A855F7] opacity-60" />
+            </div>
             <p className="petora-eyebrow">Top trader right now</p>
             {boardLoading ? (
               <>
@@ -386,8 +494,58 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── QUICK DESTINATIONS — deliberately the first thing after the hero ──
+          Most visitors want to price a pet or sanity-check a trade, not read a
+          pitch. These two cards are the shortest path to both. Uses ptr-fade
+          (immediate) rather than ptr-sr (scroll-triggered) on purpose: a
+          scroll reveal would leave the most important thing on the page
+          invisible until someone scrolls. */}
+      <section className="ptr-fade relative mt-14" style={{ animationDelay: "380ms" }}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="petora-eyebrow">Jump straight in</p>
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[color:var(--muted)]">
+            <span className="ptr-blink inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--up)]" aria-hidden="true" />
+            no account needed
+          </span>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {quickLinks.map((q, i) => (
+            <Link
+              key={q.href}
+              href={q.href}
+              onMouseMove={onCardMove}
+              className="ptr-quick petora-card group flex flex-col p-6 sm:p-7"
+              style={{ "--tint": q.tint, animationDelay: `${420 + i * 90}ms`, borderColor: "var(--line-2)" } as CSSProperties}
+            >
+              <span className="ptr-sweep" aria-hidden="true" />
+              <div className="flex items-start justify-between gap-3">
+                <span
+                  className="ptr-qicon grid h-12 w-12 flex-none place-items-center rounded-2xl"
+                  style={{ background: `rgba(${q.tint},0.14)`, border: `1px solid rgba(${q.tint},0.35)`, color: `rgb(${q.tint})` }}
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    {q.icon}
+                  </svg>
+                </span>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">{q.eyebrow}</span>
+              </div>
+              <h3 className="mt-4 text-[21px] font-bold leading-tight text-[color:var(--text)] [font-family:var(--font-display)]">
+                {q.title}
+              </h3>
+              <p className="mt-2 flex-1 text-[14px] leading-relaxed text-[color:var(--muted)]">{q.body}</p>
+              <span
+                className="mt-5 inline-flex items-center gap-1.5 text-[14px] font-semibold"
+                style={{ color: `rgb(${q.tint})` }}
+              >
+                {q.cta} <span className="ptr-arrow">→</span>
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
+
       {/* Elvebredd credit — prominent values-source attribution */}
-      <section className="ptr-sr mt-12" data-reveal>
+      <section className="ptr-sr mt-16" data-reveal>
         <div className="petora-card relative overflow-hidden p-6 sm:p-7" style={{ borderColor: "var(--line-2)", boxShadow: "0 24px 60px -34px rgba(124,58,237,0.5)" }}>
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="max-w-2xl">
@@ -458,7 +616,7 @@ export default function Home() {
         <div className="mb-4 flex items-end justify-between">
           <div>
             <p className="petora-eyebrow">Live leaderboard</p>
-            <h2 className="mt-1 text-2xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">Who's on top</h2>
+            <h2 className="mt-1 text-2xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">Who&apos;s on top</h2>
           </div>
           <Link href="/leaderboard" className="text-[14px] font-medium text-[color:var(--lilac)] transition hover:opacity-80">
             See all →

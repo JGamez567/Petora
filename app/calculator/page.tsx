@@ -31,19 +31,30 @@ type CalcItem = {
 // 18 pets per side; the board shows 3×3 and scrolls for the rest.
 const MAX_PER_SIDE = 18;
 const MIN_CELLS = 9;
+// Max copies you can add in ONE Select. Capped at 9 deliberately: nobody adds
+// 18 of the same pet, and a shorter list keeps the dropdown compact.
+const MAX_QTY = 9;
 
 // ── Demand → tradeability multiplier ─────────────────────────────────────────
 // Demand (1–3, scraped from AMVGG) discounts a pet's *practical* trade value:
 // a low-demand pet is worth less in the real trading market than its listed
 // value because it's harder to move. Unrated pets get no penalty — missing
 // data isn't low demand.
+//
+// These are trader heuristics, not measured market data. They're deliberately
+// firm: a 1-heart pet routinely sits in inventory for weeks, so treating it as
+// "worth 85% of list" was far too generous — it let a pile of junk read as a
+// fair swap for one clean, in-demand pet.
 const MAX_DEMAND = 3;
 const DEMAND_MULT: Record<number, number> = { 1: 0.70, 2: 0.90, 3: 1.0 };
 const DEMAND_LABELS = ["", "Low", "Medium", "High"] as const;
 const demandMult = (d: number | null) => (d != null && DEMAND_MULT[d] != null ? DEMAND_MULT[d] : 1.0);
 
 // ── Offer shape ("many small pets for one big pet") ──────────────────────────
-// Only the side with MORE pets is penalized, 2% per extra pet, capped at 12%.
+// Independent of demand: a side stacking far more pets than the other is worth
+// less than its raw total, because the receiver ends up holding clutter and
+// gives up a clean 1-for-1. Traders expect multi-pet offers to overpay. Only
+// the side with MORE pets is penalized, 2% per extra pet, capped at 12%.
 // NOTE: quantity counts here — adding 3 copies of a pet is 3 pets.
 const SPREAD_PER_PET = 0.02;
 const SPREAD_CAP = 0.12;
@@ -64,6 +75,7 @@ const PICKER_PAGE = 48;
 const FREE_DEMAND_PER_DAY = 3;
 
 // Values carry decimals (a Turtle is 22.5, not 23) — never round them away.
+// Up to 2 decimal places, trailing zeros dropped, thousands separated.
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -221,12 +233,13 @@ export default function Calculator() {
   // ── item-detail modal (tap a pet → choose variant + quantity → Select) ────
   // Defaults to Fly & Ride on EVERY open (the most-traded form). This replaces
   // the old persistent global toggle bar in the picker footer — deliberate
-  // product change, per the redesign.
+  // product change: the toggles used to persist across opens, they no longer do.
   const [detail, setDetail] = useState<CatalogItem | null>(null);
   const [dTier, setDTier] = useState<TierKey>("normal");
   const [dFly, setDFly] = useState(true);
   const [dRide, setDRide] = useState(true);
   const [dQty, setDQty] = useState(1);
+  const [qtyOpen, setQtyOpen] = useState(false);
   // undefined = still resolving, null = no value exists for this variant
   const [dValue, setDValue] = useState<number | null | undefined>(undefined);
 
@@ -278,19 +291,32 @@ export default function Calculator() {
     return () => { cancelled = true; };
   }, []);
 
-  // esc closes the detail modal first, then the picker; lock body scroll
+  const sideList = pickerSide === "you" ? you : them;
+  const slotsLeft = pickerSide == null ? 0 : MAX_PER_SIDE - sideList.length;
+  const sideFull = pickerSide != null && slotsLeft <= 0;
+  const qtyMax = Math.max(1, Math.min(MAX_QTY, slotsLeft));
+
+  function closePicker() {
+    setPickerSide(null);
+    setDetail(null);
+    setQtyOpen(false);
+  }
+
+  // esc closes the qty list, then the detail modal, then the picker.
+  // Also locks body scroll while the picker is open.
   useEffect(() => {
     if (!pickerSide) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (detail) setDetail(null);
+      if (qtyOpen) setQtyOpen(false);
+      else if (detail) setDetail(null);
       else closePicker();
     };
     window.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
-  }, [pickerSide, detail]);
+  }, [pickerSide, detail, qtyOpen]);
 
   // search / category change → back to the first slice, scrolled to top
   useEffect(() => {
@@ -298,18 +324,10 @@ export default function Calculator() {
     pickerScrollRef.current?.scrollTo({ top: 0 });
   }, [search, pickCat]);
 
-  const sideList = pickerSide === "you" ? you : them;
-  const slotsLeft = pickerSide == null ? 0 : MAX_PER_SIDE - sideList.length;
-  const sideFull = pickerSide != null && slotsLeft <= 0;
-
   function openPicker(side: "you" | "them") {
     setPickerSide(side);
     setSearch("");
     setPickerVisible(PICKER_PAGE);
-    setDetail(null);
-  }
-  function closePicker() {
-    setPickerSide(null);
     setDetail(null);
   }
 
@@ -361,8 +379,11 @@ export default function Calculator() {
 
   // clamp quantity if the side fills up while the modal is open
   useEffect(() => {
-    if (detail && dQty > Math.max(1, slotsLeft)) setDQty(Math.max(1, slotsLeft));
-  }, [detail, slotsLeft, dQty]);
+    if (detail && dQty > qtyMax) setDQty(qtyMax);
+  }, [detail, qtyMax, dQty]);
+
+  // close the qty list whenever the detail modal opens/closes
+  useEffect(() => { setQtyOpen(false); }, [detail]);
 
   // Select → add `dQty` copies, then TAB OUT of both modals. Adding another
   // pet means pressing the + slot again (per the redesign).
@@ -386,6 +407,7 @@ export default function Calculator() {
 
     setDetail(null);
     setPickerSide(null);
+    setQtyOpen(false);
   }
 
   function removeItem(side: "you" | "them", uid: number) {
@@ -406,6 +428,8 @@ export default function Calculator() {
     const youRaw = sum(you);
     const themRaw = sum(them);
 
+    // demand weighting, then the offer-shape penalty on whichever side is
+    // stacking more pets
     const youSpread = spreadFactor(you.length, them.length);
     const themSpread = spreadFactor(them.length, you.length);
     const youAdj = sumAdj(you) * youSpread;
@@ -429,9 +453,10 @@ export default function Calculator() {
     const meterPos = toPos(ratioAdj);      // demand-adjusted (Premium bar)
     const meterPosRaw = toPos(ratioRaw);   // raw value (free bar)
 
+    // ── explain WHY the demand verdict differs from raw value ──────────────
     const lowIncoming = them.filter((i) => i.item.demand === 1).length;
     const lowOutgoing = you.filter((i) => i.item.demand === 1).length;
-    const themStacking = them.length - you.length;
+    const themStacking = them.length - you.length; // >0 → they're the multi-pet side
     const reasons: string[] = [];
     if (!empty) {
       if (lowIncoming > 0) {
@@ -463,7 +488,10 @@ export default function Calculator() {
   const youDisplay = useCountUp(calc.youRaw);
   const themDisplay = useCountUp(calc.themRaw);
 
-  // Headline verdict: VALUE-only until the demand bar is unlocked.
+  // Headline verdict: VALUE-only until the demand bar is unlocked (premium, or
+  // a free user who spent a try), then it upgrades to the demand-adjusted
+  // "true" verdict. Showing the adjusted one before unlock would give away
+  // exactly what the reveal is for.
   const headlineIsDemand = premium || demandShown;
   const headlineVerdict = headlineIsDemand ? calc.verdict : calc.rawVerdict;
   const verdictColorOf = (v: "win" | "fair" | "lose") =>
@@ -473,6 +501,10 @@ export default function Calculator() {
   const verdictColor = verdictColorOf(headlineVerdict);
   const verdictText = calc.empty ? "Add pets to both sides" : verdictTextOf(headlineVerdict);
 
+  // Demand-bar access. Premium sees it always (remaining === null). A free
+  // user reveals it by spending one server-side check; once revealed it stays
+  // visible for the session so they can keep tweaking the trade. The SERVER
+  // decides whether a spend is allowed — the client just calls and obeys.
   const demandVisible = premium || demandShown;
   const freeRemaining = demandRemaining ?? 0;
 
@@ -485,6 +517,7 @@ export default function Calculator() {
         setDemandShown(true);
         setDemandRemaining(data.premium ? null : (data.remaining ?? 0));
       } else if (data && !data.allowed) {
+        // server says no (limit hit on another device, etc.) — sync the count
         setDemandRemaining(0);
       }
     } finally {
@@ -492,7 +525,9 @@ export default function Calculator() {
     }
   }
 
-  // Picker list: filtered, then sorted BIGGEST value first.
+  // Picker list: filtered, then sorted BIGGEST value first (no-value items
+  // sink to the bottom). The whole catalog is reachable — tiles render in
+  // slices of PICKER_PAGE as you scroll, so the DOM stays light.
   const pickerFiltered = useMemo(() =>
     catalog
       .filter((c) => c.category === pickCat)
@@ -502,6 +537,7 @@ export default function Calculator() {
   );
   const pickerList = pickerFiltered.slice(0, pickerVisible);
 
+  // infinite scroll inside the picker: near the bottom → grow the slice
   function onPickerScroll(e: React.UIEvent<HTMLDivElement>) {
     const el = e.currentTarget;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) {
@@ -510,14 +546,19 @@ export default function Calculator() {
   }
 
   // ── one side of the board (plain render function — NOT a nested component,
-  // so the scrollable board doesn't remount and lose scroll position) ───────
+  // so the scrollable board doesn't remount and lose scroll position on every
+  // state change) ───────────────────────────────────────────────────────────
   function renderBoard(side: "you" | "them", list: CalcItem[], title: string, display: number) {
     const canAdd = list.length < MAX_PER_SIDE;
+    // filled cells + one add-cell (if allowed); padded to at least 9 cells and
+    // always rounded UP to a complete row of 3 — the board never shows a
+    // ragged bottom row, it just grows 3 boxes at a time as pets are added.
     const rawCells = list.length + (canAdd ? 1 : 0);
     const cellCount = Math.max(MIN_CELLS, Math.ceil(rawCells / 3) * 3);
     return (
       <div className="min-w-0 flex-1">
         <div className="petora-card overflow-hidden">
+          {/* board header */}
           <div className="flex items-center justify-between gap-1 border-b border-[color:var(--line)] px-2.5 py-2 sm:px-4 sm:py-3">
             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
               <h2 className="truncate text-[10.5px] font-bold uppercase tracking-wider text-[color:var(--text)] sm:text-[13px] [font-family:var(--font-display)]">{title}</h2>
@@ -530,6 +571,8 @@ export default function Calculator() {
             </span>
           </div>
 
+          {/* 3-wide grid — square tiles on mobile (icon + badges only, like the
+              in-game trade window), full detail cards on larger screens */}
           <div className="ptrc-scroll max-h-[380px] overflow-y-auto p-1.5 sm:p-3">
             <div className="grid grid-cols-3 gap-1 sm:gap-2">
               {Array.from({ length: cellCount }).map((_, i) => {
@@ -610,7 +653,6 @@ export default function Calculator() {
   const detailVariant = detail
     ? variantLabel(detailIsPet ? dTier : "normal", detailIsPet ? dFly : false, detailIsPet ? dRide : false)
     : "";
-  const qtyMax = Math.max(1, Math.min(slotsLeft, MAX_PER_SIDE));
 
   return (
     <main className="mx-auto max-w-5xl px-2 py-6 sm:px-6 sm:py-10">
@@ -621,6 +663,7 @@ export default function Calculator() {
         @keyframes ptrcBackdrop { from{opacity:0} to{opacity:1} }
         @keyframes ptrcModalIn { from{opacity:0; transform:translateY(16px) scale(.96)} to{opacity:1; transform:translateY(0) scale(1)} }
         @keyframes ptrcDetailIn { from{opacity:0; transform:translateY(10px) scale(.92)} to{opacity:1; transform:translateY(0) scale(1)} }
+        @keyframes ptrcQtyIn { from{opacity:0; transform:translateY(-6px)} to{opacity:1; transform:translateY(0)} }
         @keyframes ptrcPulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,0)} 50%{box-shadow:0 0 18px 2px rgba(168,85,247,0.35)} }
         @keyframes ptrcSlotGlow { 0%,100%{box-shadow:inset 0 0 0 0 rgba(168,85,247,0)} 50%{box-shadow:inset 0 0 16px 0 rgba(168,85,247,0.18)} }
         @keyframes ptrcFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
@@ -633,6 +676,7 @@ export default function Calculator() {
         .ptrc-backdrop { animation: ptrcBackdrop .2s ease-out both; }
         .ptrc-modal { animation: ptrcModalIn .28s cubic-bezier(.22,1,.36,1) both; }
         .ptrc-detail { animation: ptrcDetailIn .24s cubic-bezier(.22,1,.36,1) both; }
+        .ptrc-qtylist { animation: ptrcQtyIn .16s ease-out both; transform-origin: top center; }
         .ptrc-float { animation: ptrcFloat 3.2s ease-in-out infinite; }
         .ptrc-plus { transition: transform .2s ease; }
         .ptrc-slot:hover .ptrc-plus { transform: scale(1.25) rotate(90deg); }
@@ -643,7 +687,7 @@ export default function Calculator() {
         .ptrc-scroll::-webkit-scrollbar { width: 6px; }
         .ptrc-scroll::-webkit-scrollbar-thumb { background: rgba(168,139,250,0.3); border-radius: 999px; }
         @media (prefers-reduced-motion: reduce) {
-          .ptrc-reveal, .ptrc-pop, .ptrc-backdrop, .ptrc-modal, .ptrc-detail { animation:none!important; opacity:1!important; transform:none!important; }
+          .ptrc-reveal, .ptrc-pop, .ptrc-backdrop, .ptrc-modal, .ptrc-detail, .ptrc-qtylist { animation:none!important; opacity:1!important; transform:none!important; }
           .ptrc-skel, .ptrc-float { animation:none!important; }
           .ptrc-marker { transition:none!important; }
           .ptrc-verdict, .ptrc-glow { animation:none!important; }
@@ -671,11 +715,13 @@ export default function Calculator() {
       {/* verdict panel */}
       <div className="petora-card ptrc-reveal mt-5 p-3.5 sm:mt-6 sm:p-5" style={{ animationDelay: "60ms", borderColor: "var(--line-2)" }}>
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-4">
+          {/* you give */}
           <div className="min-w-0 text-left">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You give</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(youDisplay)}</div>
             {headlineIsDemand && <div className="text-[10px] tabular-nums text-[color:var(--muted)] sm:text-[11px]">adj. {fmt(round2(calc.youAdj))}</div>}
           </div>
+          {/* verdict */}
           <div className="text-center">
             <span
               className="ptrc-verdict inline-block rounded-full border px-3 py-1.5 text-[12px] font-bold sm:px-6 sm:py-2 sm:text-base [font-family:var(--font-display)]"
@@ -688,6 +734,7 @@ export default function Calculator() {
               {headlineIsDemand ? <>Value <span className="text-[color:var(--lilac)]">+</span> Demand <Heart filled size={9} /></> : "By value"}
             </p>
           </div>
+          {/* you receive */}
           <div className="min-w-0 text-right">
             <div className="text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[10px]">You receive</div>
             <div className="mt-0.5 text-lg font-bold tabular-nums text-[color:var(--text)] sm:text-2xl [font-family:var(--font-data)]">{fmt(themDisplay)}</div>
@@ -794,6 +841,7 @@ export default function Calculator() {
             </>
           ) : (
             <div className="relative overflow-hidden rounded-xl">
+              {/* blurred decoy bar — static, no real data */}
               <div className="pointer-events-none select-none blur-[6px] px-1 py-2" aria-hidden="true">
                 <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
                   <span style={{ color: "#7C3AED" }}>Lose</span>
@@ -804,6 +852,7 @@ export default function Calculator() {
                   <span className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white" style={{ left: "62%", background: "#A855F7" }} />
                 </div>
               </div>
+              {/* overlay: reveal button (free, has tries) OR upgrade (out / logged out) */}
               <div
                 className="absolute inset-0 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-4 text-center"
                 style={{ background: "linear-gradient(to bottom, rgba(10,6,20,0.4), rgba(10,6,20,0.7))" }}
@@ -852,7 +901,8 @@ export default function Calculator() {
         </div>
       </div>
 
-      {/* the two boards, always side by side (like the in-game trade window) */}
+      {/* the two boards, always side by side (like the in-game trade window),
+          with VS + the value difference in the narrow middle column */}
       <div className="ptrc-reveal mt-5 flex items-stretch sm:mt-6" style={{ animationDelay: "120ms" }}>
         {renderBoard("you", you, "Your offer", youDisplay)}
         <div className="flex flex-none flex-col items-center justify-center gap-1.5 px-1 sm:gap-2.5 sm:px-3">
@@ -864,6 +914,7 @@ export default function Calculator() {
             VS
           </span>
           {!calc.empty && (() => {
+            // raw value difference: + = they're overpaying you, − = you're overpaying them
             const diff = round2(calc.themRaw - calc.youRaw);
             if (Math.abs(diff) < 0.005) {
               return (
@@ -1089,19 +1140,64 @@ export default function Calculator() {
                   <p className="mt-3 text-[12px] text-[color:var(--muted)]">No variations for this item.</p>
                 )}
 
-                {/* quantity — capped at the slots left on this side */}
+                {/* quantity — custom dropdown so it ALWAYS opens downward.
+                    A native <select> flips upward when the option list won't
+                    fit below the field, and no CSS can override that. */}
                 <div className="mt-4 flex items-center justify-center gap-2">
-                  <label htmlFor="ptrc-qty" className="text-[12px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Qty</label>
-                  <select
-                    id="ptrc-qty"
-                    value={dQty}
-                    onChange={(e) => setDQty(Number(e.target.value))}
-                    className="rounded-lg border border-[color:var(--line-2)] bg-[color:var(--surface)] px-3 py-2 text-[15px] font-bold tabular-nums text-[color:var(--text)] outline-none transition focus:border-[color:var(--violet)]"
-                  >
-                    {Array.from({ length: qtyMax }, (_, i) => i + 1).map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
+                  <span className="text-[12px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Qty</span>
+                  <div className="relative">
+                    <button
+                      onClick={() => setQtyOpen((v) => !v)}
+                      aria-haspopup="listbox"
+                      aria-expanded={qtyOpen}
+                      className="flex w-[78px] items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[15px] font-bold tabular-nums text-[color:var(--text)] transition active:scale-95"
+                      style={{ background: "var(--surface)", borderColor: qtyOpen ? "var(--violet)" : "var(--line-2)" }}
+                    >
+                      {dQty}
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                        style={{ transform: qtyOpen ? "rotate(180deg)" : "none", transition: "transform .18s ease" }}
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                    {qtyOpen && (
+                      <>
+                        {/* click-away catcher */}
+                        <div className="fixed inset-0 z-[70]" onClick={() => setQtyOpen(false)} aria-hidden="true" />
+                        <ul
+                          role="listbox"
+                          aria-label="Quantity"
+                          className="ptrc-qtylist ptrc-scroll absolute left-0 top-full z-[80] mt-1.5 max-h-[196px] w-[78px] overflow-y-auto rounded-xl border py-1 shadow-[0_18px_40px_-14px_rgba(0,0,0,0.8)]"
+                          style={{ background: "var(--surface-2)", borderColor: "var(--line-2)" }}
+                        >
+                          {Array.from({ length: qtyMax }, (_, i) => i + 1).map((n) => (
+                            <li key={n}>
+                              <button
+                                role="option"
+                                aria-selected={n === dQty}
+                                onClick={() => { setDQty(n); setQtyOpen(false); }}
+                                className="block w-full px-3 py-1.5 text-left text-[14.5px] font-bold tabular-nums transition"
+                                style={n === dQty
+                                  ? { background: "rgba(168,85,247,0.22)", color: "var(--text)" }
+                                  : { color: "var(--muted)" }}
+                              >
+                                {n}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </div>
                   <span className="text-[11.5px] text-[color:var(--muted)]">{slotsLeft} slot{slotsLeft === 1 ? "" : "s"} left</span>
                 </div>
 
