@@ -13,7 +13,8 @@ type CatalogItem = {
   icon_url: string | null;
   category: Category;
   demand: number | null;
-  baseValue: number | null; // Normal / No-Potion value (grid display + sort)
+  baseValue: number | null; // Normal / No-Potion value on the DISPLAYED source
+  highTier: boolean;        // pet's NORMAL FLY & RIDE Elvebredd value >= HIGH_TIER_ELVE
 };
 
 type TierKey = "normal" | "neon" | "mega";
@@ -26,6 +27,7 @@ type CalcItem = {
   fly: boolean;
   ride: boolean;
   value: number;
+  highTier: boolean;   // this exact variant is >= HIGH_TIER_ELVE on Elvebredd
 };
 
 // 18 pets per side; the board shows 3×3 and scrolls for the rest.
@@ -48,7 +50,43 @@ const MAX_QTY = 9;
 const MAX_DEMAND = 3;
 const DEMAND_MULT: Record<number, number> = { 1: 0.70, 2: 0.90, 3: 1.0 };
 const DEMAND_LABELS = ["", "Low", "Medium", "High"] as const;
-const demandMult = (d: number | null) => (d != null && DEMAND_MULT[d] != null ? DEMAND_MULT[d] : 1.0);
+
+// ── High tier ────────────────────────────────────────────────────────────────
+// A "high tier" is a pet whose NORMAL FLY & RIDE value on Elvebredd is at or
+// above 100 — the pets every trader actively wants. They move fast regardless of
+// what a demand list says, so a low demand rating shouldn't discount them the
+// way it discounts a common.
+//
+// Two things this is deliberately NOT:
+//   - NOT the placed variant's value. A 20-value pet that reaches 100 as a Mega
+//     is a cheap pet with an expensive form, not a high tier. The rating belongs
+//     to the PET and applies to every variant of it equally.
+//   - NOT measured on AMVGG, even when the user is viewing AMVGG prices. High
+//     tier is a property of the pet, not of the scale you read it on, and
+//     hardcoding an AMVGG-equivalent threshold would mean guessing a conversion
+//     ratio that drifts every time either list updates.
+//
+// Normal Fly & Ride is the same canonical variant get_movers uses, so "what is
+// this pet worth" means the same thing across the site. (The catalog GRID still
+// displays Normal / No-Potion — that difference is intentional, invariant #6.)
+const HIGH_TIER_ELVE = 100;
+// A high-tier pet's demand rating is treated as this much higher (capped at
+// MAX_DEMAND) before the multiplier applies. +1 turns a 1-heart high tier from
+// x0.70 into x0.90, and a 2-heart into x1.0. Tune against trades you already
+// know the answer to.
+const HIGH_TIER_DEMAND_BUMP = 1;
+
+// Demand rating AFTER the high-tier bump. null (unrated) stays null — missing
+// data still isn't low demand.
+const effectiveDemand = (d: number | null, highTier: boolean): number | null => {
+  if (d == null) return null;
+  return highTier ? Math.min(MAX_DEMAND, d + HIGH_TIER_DEMAND_BUMP) : d;
+};
+
+const demandMult = (d: number | null, highTier = false) => {
+  const eff = effectiveDemand(d, highTier);
+  return eff != null && DEMAND_MULT[eff] != null ? DEMAND_MULT[eff] : 1.0;
+};
 
 // ── Offer shape ("many small pets for one big pet") ──────────────────────────
 // Independent of demand: a side stacking far more pets than the other is worth
@@ -64,6 +102,29 @@ const spreadFactor = (mine: number, theirs: number) =>
 // Verdict thresholds on the demand-adjusted totals: within ±FAIR_BAND = Fair.
 const FAIR_BAND = 0.05;
 
+// ── VALUE SOURCE ─────────────────────────────────────────────────────────────
+// pet_values holds BOTH Elvebredd and AMVGG rows, and current_pet_values
+// returns one row per (variant, source). Every value read MUST pick a source
+// explicitly — without it, current_pet_values[0] grabs whichever row comes
+// back first and the calculator silently mixes two completely different
+// scales (a Frost Dragon is thousands on Elvebredd, 1.675 on AMVGG Baseless).
+//
+// Read from profiles.value_source; anonymous visitors get Elvebredd.
+type ValueSource = "elvebredd" | "amvgg";
+const DEFAULT_SOURCE: ValueSource = "elvebredd";
+
+const SOURCE_META: Record<ValueSource, { label: string; accent: string; site: string }> = {
+  elvebredd: { label: "Elvebredd", accent: "168,85,247", site: "https://elvebredd.com" },
+  amvgg:     { label: "AMVGG",     accent: "56,189,248", site: "https://amvgg.com" },
+};
+
+// Pull the value for `source` out of an embedded current_pet_values array.
+const pickValue = (rows: any, source: ValueSource): number | null => {
+  if (!Array.isArray(rows)) return null;
+  const hit = rows.find((r: any) => r?.source === source);
+  return hit?.value == null ? null : Number(hit.value);
+};
+
 const FETCH_PAGE = 1000;
 // picker renders in slices as you scroll — keeps the DOM light with 750+ tiles
 const PICKER_PAGE = 48;
@@ -76,7 +137,7 @@ const FREE_DEMAND_PER_DAY = 3;
 
 // Values carry decimals (a Turtle is 22.5, not 23) — never round them away.
 // Up to 2 decimal places, trailing zeros dropped, thousands separated.
-const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 3 });
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const variantLabel = (tier: TierKey, fly: boolean, ride: boolean) => {
@@ -204,12 +265,22 @@ export default function Calculator() {
   const [demandRemaining, setDemandRemaining] = useState<number | null>(0); // null = unlimited
   const [demandShown, setDemandShown] = useState(false); // revealed this session
   const [revealBusy, setRevealBusy] = useState(false);
+  // null = preference not resolved yet; the picker waits for it rather than
+  // showing Elvebredd prices that then swap to AMVGG.
+  const [valueSource, setValueSource] = useState<ValueSource | null>(null);
 
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
       const uid = data.user?.id ?? null;
       setUserId(uid);
+      if (uid) {
+        const { data: prof } = await supabase
+          .from("profiles").select("value_source").eq("id", uid).single();
+        setValueSource(prof?.value_source === "amvgg" ? "amvgg" : DEFAULT_SOURCE);
+      } else {
+        setValueSource(DEFAULT_SOURCE);
+      }
       const { data: status } = await supabase.rpc("get_demand_status");
       if (status) {
         setPremium(!!status.premium);
@@ -254,6 +325,7 @@ export default function Calculator() {
   // so name alone can duplicate rows across pages. name+id is unique; the Map
   // dedupes as a second line of defense.
   useEffect(() => {
+    if (valueSource == null) return; // wait for the preference
     let cancelled = false;
     async function load() {
       setCatalogLoading(true);
@@ -263,7 +335,7 @@ export default function Calculator() {
         const { data, error } = await supabase
           .from("pets")
           .select(`id, name, rarity, icon_url, category, demand,
-            pet_variants!inner ( neon, fly, ride, current_pet_values ( value ) )`)
+            pet_variants!inner ( neon, fly, ride, current_pet_values ( value, source ) )`)
           .eq("pet_variants.neon", "normal")
           .eq("pet_variants.fly", false)
           .eq("pet_variants.ride", false)
@@ -277,19 +349,47 @@ export default function Calculator() {
         from += FETCH_PAGE;
       }
       if (cancelled) return;
+
+      // ── which pets are HIGH TIER ──────────────────────────────────────
+      // High tier is the pet's NORMAL FLY & RIDE value on Elvebredd, which the
+      // query above doesn't fetch (it pulls Normal / No-Potion for the grid).
+      // So: one extra paginated pass over the Fly & Ride variants, Elvebredd
+      // rows only. ~760 rows, but paginated anyway — REST caps every select at
+      // 1,000 regardless of the limit asked for, and ordering by a unique key
+      // (pet_id) keeps .range() paging stable.
+      const highTierIds = new Set<number>();
+      let hFrom = 0;
+      while (true) {
+        const { data: hv, error: hErr } = await supabase
+          .from("pet_variants")
+          .select("pet_id, current_pet_values ( value, source )")
+          .eq("neon", "normal")
+          .eq("fly", true)
+          .eq("ride", true)
+          .order("pet_id")
+          .range(hFrom, hFrom + FETCH_PAGE - 1);
+        if (cancelled) return;
+        if (hErr) { console.error(hErr); break; } // degrade: nothing marked high tier
+        for (const row of hv ?? []) {
+          const elve = pickValue((row as any).current_pet_values, "elvebredd");
+          if (elve != null && elve >= HIGH_TIER_ELVE) highTierIds.add((row as any).pet_id);
+        }
+        if (!hv || hv.length < FETCH_PAGE) break;
+        hFrom += FETCH_PAGE;
+      }
+
       setCatalog([...byId.values()].map((p: any) => ({
         id: p.id, name: p.name, rarity: p.rarity, icon_url: p.icon_url,
         category: (p.category ?? "pet") as Category,
         demand: p.demand ?? null,
-        baseValue: p.pet_variants?.[0]?.current_pet_values?.[0]?.value != null
-          ? Number(p.pet_variants[0].current_pet_values[0].value)
-          : null,
+        baseValue: pickValue(p.pet_variants?.[0]?.current_pet_values, valueSource!),
+        highTier: highTierIds.has(p.id),
       })));
       setCatalogLoading(false);
     }
     load();
     return () => { cancelled = true; };
-  }, []);
+  }, [valueSource]);
 
   const sideList = pickerSide === "you" ? you : them;
   const slotsLeft = pickerSide == null ? 0 : MAX_PER_SIDE - sideList.length;
@@ -317,6 +417,36 @@ export default function Calculator() {
     document.body.style.overflow = "hidden";
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
   }, [pickerSide, detail, qtyOpen]);
+
+  // ── Re-lock the demand verdict when the trade is cleared ───────────────
+  // A reveal buys ONE trade, not a session. Previously demandShown stayed true
+  // until a refresh, so a free user could reveal once, clear the boards, and
+  // read unlimited verdicts without spending another check — the daily limit was
+  // only enforced on page load.
+  //
+  // Clearing both sides ends the trade, so the verdict re-locks and the next
+  // reveal spends another server-side check. Tweaking a trade in place (adding
+  // or removing a pet while something is still on the board) deliberately does
+  // NOT re-lock — that's the affordance the reveal is meant to buy.
+  useEffect(() => {
+    if (you.length === 0 && them.length === 0 && demandShown) {
+      setDemandShown(false);
+    }
+  }, [you.length, them.length, demandShown]);
+
+  // Switching value source invalidates everything already priced: the variant
+  // cache holds old-scale numbers, and so do any pets already on the boards.
+  // Mixing 4.97 and 22,000 in one total would produce a nonsense verdict.
+  const prevSourceRef = useRef<ValueSource | null>(null);
+  useEffect(() => {
+    if (valueSource == null) return;
+    if (prevSourceRef.current != null && prevSourceRef.current !== valueSource) {
+      setVariantValues(new Map());
+      setYou([]);
+      setThem([]);
+    }
+    prevSourceRef.current = valueSource;
+  }, [valueSource]);
 
   // search / category change → back to the first slice, scrolled to top
   useEffect(() => {
@@ -353,6 +483,7 @@ export default function Calculator() {
     const f = isPet ? dFly : false;
     const r = isPet ? dRide : false;
 
+    // Normal / No-Potion (and every non-pet) is already loaded from the catalog
     if (!isPet || (t === "normal" && !f && !r)) { setDValue(detail.baseValue); return; }
     const k = vkey(detail.id, t, f, r);
     if (variantValues.has(k)) { setDValue(variantValues.get(k) ?? null); return; }
@@ -362,20 +493,19 @@ export default function Calculator() {
     (async () => {
       const { data } = await supabase
         .from("pet_variants")
-        .select("id, current_pet_values ( value )")
+        .select("id, current_pet_values ( value, source )")
         .eq("pet_id", detail.id)
         .eq("neon", t)
         .eq("fly", f)
         .eq("ride", r)
         .limit(1);
       if (cancelled) return;
-      const raw = (data?.[0] as any)?.current_pet_values?.[0]?.value;
-      const v = raw == null ? null : Number(raw);
+      const v = pickValue((data?.[0] as any)?.current_pet_values, valueSource!);
       setVariantValues((prev) => new Map(prev).set(k, v));
       setDValue(v);
     })();
     return () => { cancelled = true; };
-  }, [detail, dTier, dFly, dRide]);
+  }, [detail, dTier, dFly, dRide, valueSource]);
 
   // clamp quantity if the side fills up while the modal is open
   useEffect(() => {
@@ -398,8 +528,12 @@ export default function Calculator() {
     const n = Math.max(0, Math.min(dQty, room));
     if (n === 0) return;
 
+    // High tier belongs to the PET (its Normal Fly & Ride Elvebredd value), so
+    // every variant of a high-tier pet carries the flag and no variant of a
+    // cheap pet earns it.
     const entries: CalcItem[] = Array.from({ length: n }, () => ({
       uid: uidRef.current++, item: detail, tier: t, fly: f, ride: r, value: dValue,
+      highTier: detail.highTier,
     }));
 
     if (pickerSide === "you") setYou((s) => [...s, ...entries].slice(0, MAX_PER_SIDE));
@@ -423,7 +557,8 @@ export default function Calculator() {
   // ── the math ──────────────────────────────────────────────────────────────
   const calc = useMemo(() => {
     const sum = (list: CalcItem[]) => list.reduce((a, i) => a + i.value, 0);
-    const sumAdj = (list: CalcItem[]) => list.reduce((a, i) => a + i.value * demandMult(i.item.demand), 0);
+    const sumAdj = (list: CalcItem[]) =>
+      list.reduce((a, i) => a + i.value * demandMult(i.item.demand, i.highTier), 0);
 
     const youRaw = sum(you);
     const themRaw = sum(them);
@@ -454,8 +589,14 @@ export default function Calculator() {
     const meterPosRaw = toPos(ratioRaw);   // raw value (free bar)
 
     // ── explain WHY the demand verdict differs from raw value ──────────────
-    const lowIncoming = them.filter((i) => i.item.demand === 1).length;
-    const lowOutgoing = you.filter((i) => i.item.demand === 1).length;
+    // Count on EFFECTIVE demand — a high-tier pet bumped up to 2 hearts is no
+    // longer being penalised, so calling it "low demand" in the explanation
+    // would contradict the maths above it.
+    const lowIncoming = them.filter((i) => effectiveDemand(i.item.demand, i.highTier) === 1).length;
+    const lowOutgoing = you.filter((i) => effectiveDemand(i.item.demand, i.highTier) === 1).length;
+    const bumped = [...you, ...them].filter(
+      (i) => i.highTier && i.item.demand != null && i.item.demand < MAX_DEMAND
+    ).length;
     const themStacking = them.length - you.length; // >0 → they're the multi-pet side
     const reasons: string[] = [];
     if (!empty) {
@@ -464,6 +605,9 @@ export default function Calculator() {
       }
       if (lowOutgoing > 0) {
         reasons.push(`${lowOutgoing} of the pets you'd give away ${lowOutgoing === 1 ? "is" : "are"} low demand, which costs you less than the sticker price`);
+      }
+      if (bumped > 0) {
+        reasons.push(`${bumped} high-tier pet${bumped === 1 ? "" : "s"} (${HIGH_TIER_ELVE}+ on Elvebredd) ${bumped === 1 ? "was" : "were"} counted as more in-demand than ${bumped === 1 ? "its" : "their"} rating suggests — top pets move fast whatever the list says`);
       }
       if (themStacking >= 2) {
         reasons.push(`they're sending ${them.length} pets for your ${you.length} — multi-pet offers are expected to overpay, since you're the one giving up a clean trade`);
@@ -710,6 +854,23 @@ export default function Calculator() {
           <span className="font-semibold text-[color:var(--text)]">demand</span> — because a trade
           that wins on paper can still leave you holding pets nobody wants.
         </p>
+        {valueSource && (
+          <Link
+            href="/settings"
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold transition hover:brightness-110 active:scale-95"
+            style={{
+              borderColor: `rgba(${SOURCE_META[valueSource].accent},0.5)`,
+              background: `rgba(${SOURCE_META[valueSource].accent},0.10)`,
+              color: `rgb(${SOURCE_META[valueSource].accent})`,
+            }}
+            title="Change your value source in Settings"
+          >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `rgb(${SOURCE_META[valueSource].accent})` }} aria-hidden="true" />
+            Values: {SOURCE_META[valueSource].label}
+            <span className="opacity-60" aria-hidden="true">·</span>
+            <span className="font-medium opacity-80">change</span>
+          </Link>
+        )}
       </div>
 
       {/* verdict panel */}
@@ -968,9 +1129,17 @@ export default function Calculator() {
         </p>
         <p className="mt-3 border-t border-[color:var(--line)] pt-3 text-[12px]">
           Values from{" "}
-          <a href="https://elvebredd.com" target="_blank" rel="noopener noreferrer" className="font-semibold text-[color:var(--lilac)] underline decoration-[rgba(168,139,250,0.4)] underline-offset-2 hover:decoration-[color:var(--lilac)]">
-            Elvebredd
-          </a>, demand from AMVGG. Petora is not affiliated with either site.
+          <a
+            href={SOURCE_META[valueSource ?? DEFAULT_SOURCE].site}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold text-[color:var(--lilac)] underline decoration-[rgba(168,139,250,0.4)] underline-offset-2 hover:decoration-[color:var(--lilac)]"
+          >
+            {SOURCE_META[valueSource ?? DEFAULT_SOURCE].label}
+          </a>, demand from AMVGG. Petora is not affiliated with either site.{" "}
+          <Link href="/settings" className="font-semibold text-[color:var(--lilac)] underline underline-offset-2">
+            Change value source
+          </Link>
         </p>
       </div>
 
@@ -1123,9 +1292,18 @@ export default function Calculator() {
                 <h3 className="mt-2 text-[22px] font-bold leading-tight text-[color:var(--text)] sm:text-2xl [font-family:var(--font-display)]">
                   {detail.name}
                 </h3>
-                <div className="mt-1 flex items-center justify-center gap-2">
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
                   <span className="text-[12px] font-semibold text-[color:var(--lilac)]">{detailVariant}</span>
                   <DemandHearts level={detail.demand} size={10} />
+                  {detail.highTier && (
+                    <span
+                      className="rounded-full border px-2 py-px text-[10px] font-bold uppercase tracking-wider"
+                      style={{ borderColor: "rgba(251,191,36,0.5)", background: "rgba(251,191,36,0.12)", color: "#FBBF24" }}
+                      title={`Normal Fly & Ride is ${HIGH_TIER_ELVE}+ on Elvebredd — counted as more in-demand`}
+                    >
+                      High tier
+                    </span>
+                  )}
                 </div>
 
                 {/* variant toggles — default Fly & Ride, pets only */}

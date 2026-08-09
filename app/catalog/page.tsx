@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
@@ -10,11 +11,30 @@ type Category = "pet" | "egg" | "pet_wear";
 type Pet = { id: number; name: string; rarity: string | null; icon_url: string | null; value: number | null; category: Category; demand: number | null };
 type Mover = { pet_id: number; name: string; icon_url: string | null; current_value: number; change: number };
 
-// Graph access resolves per selected pet:
-// pending      → still figuring out who's logged in
-// allowed      → premium, or a free user within (or re-viewing) today's quota
-// locked-auth  → not logged in (graphs require an account)
-// locked-limit → free user, out of free graphs today
+// ── VALUE SOURCE ─────────────────────────────────────────────────────────────
+// pet_values holds BOTH Elvebredd and AMVGG rows, and current_pet_values
+// returns one row per (variant, source). Every value read MUST therefore pick
+// a source explicitly — without it, `current_pet_values[0]` grabs whichever
+// row comes back first and the catalog silently shows the wrong scale (a Frost
+// Dragon reads 1.675 instead of thousands).
+//
+// Which source is read comes from profiles.value_source. Anonymous visitors
+// get Elvebredd, the community default.
+type ValueSource = "elvebredd" | "amvgg";
+const DEFAULT_SOURCE: ValueSource = "elvebredd";
+
+const SOURCE_META: Record<ValueSource, { label: string; accent: string; site: string }> = {
+  elvebredd: { label: "Elvebredd", accent: "168,85,247", site: "https://elvebredd.com" },
+  amvgg:     { label: "AMVGG",     accent: "56,189,248", site: "https://amvgg.com" },
+};
+
+// Pull the value for `source` out of an embedded current_pet_values array.
+const pickValue = (rows: any, source: ValueSource): number | null => {
+  if (!Array.isArray(rows)) return null;
+  const hit = rows.find((r: any) => r?.source === source);
+  return hit?.value == null ? null : Number(hit.value);
+};
+
 type GraphAccess = "pending" | "allowed" | "locked-auth" | "locked-limit";
 
 const CATEGORIES: { key: Category; label: string }[] = [
@@ -37,21 +57,11 @@ const POTIONS = [
 ] as const;
 
 const DEFAULT_TIER = "normal";
-// Catalog-wide default is the plain Normal / No-Potion variant — the grid
-// values every item at it, and the modal opens on it so the number you tapped
-// is the number you see. (Rising/Falling still uses Normal Fly & Ride inside
-// the get_movers RPC — that's server-side and intentionally unchanged.)
 const DEFAULT_POTION = POTIONS[0];
 
-// Free users see the real top N movers; the rest sits behind the teaser.
 const FREE_MOVERS = 5;
 
-// Demand is scraped from AMVGG on a 1–3 scale (their max is 3 stars — the
-// distribution across all 756 rated pets tops out at 3, and the game's most
-// demanded pets sit there). Rendered as purple hearts. Pets with no rating
-// (demand null) simply show no hearts. Per-pet, not per-variant.
 const MAX_DEMAND = 3;
-// Word label per demand level (index by the demand value itself).
 const DEMAND_LABELS = ["", "Low", "Medium", "High"] as const;
 
 const RANGES = [
@@ -71,18 +81,11 @@ const RARITIES = [
 const normRarity = (r: string | null) => (r ?? "").toLowerCase().replace(/[^a-z]/g, "");
 const rarityMeta = (r: string | null) => RARITIES.find((x) => x.key === normRarity(r)) ?? null;
 
-// Free LOGGED-IN users get 3 unique-item graphs per day, keyed per user id.
 const FREE_GRAPHS_PER_DAY = 3;
 const freeKeyFor = (uid: string) => `petora_free_graphs_${uid}`;
 const today = () => new Date().toISOString().slice(0, 10);
 
-// ── Performance knobs (old phones / weak PCs) ────────────────────────────────
-// The grid renders in slices of PAGE_SIZE instead of dumping 700–950 cards
-// into the DOM at once; more load as you scroll (or via the Show-more button).
 const PAGE_SIZE = 60;
-// Supabase REST caps any single select at 1,000 rows, so the catalog is
-// fetched in FETCH_PAGE-row pages until a short page comes back. This is what
-// keeps Pet Wear (954 and growing) from silently truncating at 1,000.
 const FETCH_PAGE = 1000;
 
 function loadFreeGraphs(uid: string): number[] {
@@ -96,9 +99,10 @@ function saveFreeGraphs(uid: string, ids: number[]) {
   try { localStorage.setItem(freeKeyFor(uid), JSON.stringify({ date: today(), ids })); } catch {}
 }
 
-const fmt = (n: number) => n.toLocaleString();
+// AMVGG values carry three decimals (Shadow Dragon is 3.625) — rounding them
+// away would misprice a trade. Elvebredd values are whole-ish but can be .5.
+const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
-// Animated count-up toward `target`. Eases out via rAF; snaps under reduced motion.
 function useCountUp(target: number, duration = 600): number {
   const [display, setDisplay] = useState(0);
   const fromRef = useRef(0);
@@ -114,7 +118,7 @@ function useCountUp(target: number, duration = 600): number {
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - t, 3);
-      setDisplay(Math.round(from + (target - from) * eased));
+      setDisplay(Math.round((from + (target - from) * eased) * 1000) / 1000);
       if (t < 1) raf = requestAnimationFrame(tick);
       else fromRef.current = target;
     };
@@ -140,8 +144,6 @@ function LockIcon({ size = 12 }: { size?: number }) {
   );
 }
 
-// One heart of the demand row. Inline SVG (not emoji) so it takes the Galaxy
-// palette and renders identically across devices.
 function Heart({ filled, size }: { filled: boolean; size: number }) {
   return (
     <svg
@@ -160,8 +162,6 @@ function Heart({ filled, size }: { filled: boolean; size: number }) {
   );
 }
 
-// Demand as a row of purple hearts (out of MAX_DEMAND). Renders nothing when
-// the pet has no rating yet — a missing rating isn't zero demand.
 function DemandHearts({ level, size = 11, showLabel = false }: { level: number | null; size?: number; showLabel?: boolean }) {
   if (level == null) return null;
   const filled = Math.max(0, Math.min(MAX_DEMAND, level));
@@ -184,12 +184,10 @@ function DemandHearts({ level, size = 11, showLabel = false }: { level: number |
   );
 }
 
-// Shimmering placeholder bar for loading states.
 function Skel({ className = "" }: { className?: string }) {
   return <div className={`ptrm-skel rounded-md ${className}`} aria-hidden="true" />;
 }
 
-// Skeleton stand-in for one card while the catalog loads.
 function SkelCard({ delay }: { delay: number }) {
   return (
     <div className="petora-card ptrm-reveal p-4 text-center" style={{ animationDelay: `${delay}ms` }}>
@@ -201,7 +199,6 @@ function SkelCard({ delay }: { delay: number }) {
   );
 }
 
-// The 3 quota pips — remaining ones glow violet, used ones dim out.
 function QuotaPips({ used, compact = false }: { used: number; compact?: boolean }) {
   const size = compact ? "h-2 w-2" : "h-2.5 w-2.5";
   return (
@@ -225,9 +222,14 @@ function QuotaPips({ used, compact = false }: { used: number; compact?: boolean 
 }
 
 export default function Catalog() {
+  const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [premium, setPremium] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
+  // null = preference not resolved yet. The grid waits for it rather than
+  // rendering Elvebredd numbers and then swapping them out — prices visibly
+  // changing on a trading site reads as a bug.
+  const [valueSource, setValueSource] = useState<ValueSource | null>(null);
 
   const [category, setCategory] = useState<Category>("pet");
   const [pets, setPets] = useState<Pet[]>([]);
@@ -247,15 +249,13 @@ export default function Catalog() {
   const [history, setHistory] = useState<{ ts: number; value: number }[]>([]);
   const [graphLoading, setGraphLoading] = useState(false);
 
-  // current value of the exact variant picked in the modal
   const [variantValue, setVariantValue] = useState<number | null>(null);
   const [variantValueLoading, setVariantValueLoading] = useState(false);
-  const animatedVariantValue = useCountUp(variantValue ?? 0);
+  
 
   const [freeGraphIds, setFreeGraphIds] = useState<number[]>([]);
   const [access, setAccess] = useState<GraphAccess>("pending");
 
-  // how many grid cards are currently rendered (incremental rendering)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -268,26 +268,31 @@ export default function Catalog() {
       setUserId(uid);
       if (uid) {
         const { data: prof } = await supabase
-          .from("profiles").select("is_premium").eq("id", uid).single();
+          .from("profiles")
+          .select("is_premium, value_source, onboarded_at")
+          .eq("id", uid)
+          .single();
         setPremium(prof?.is_premium ?? false);
+        setValueSource(prof?.value_source === "amvgg" ? "amvgg" : DEFAULT_SOURCE);
+        // Anyone who never went through onboarding (signed up before /welcome
+        // existed, or confirmed by email and landed on /login) gets sent there
+        // once. finish() stamps onboarded_at, so this fires exactly once.
+       
+      } else {
+        setValueSource(DEFAULT_SOURCE);
       }
       setAuthChecked(true);
     });
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (userId) setFreeGraphIds(loadFreeGraphs(userId));
   }, [userId]);
 
-  // Load the grid for the active category. EVERY category is valued at its
-  // plain Normal / No-Potion variant (fly=false, ride=false) — pets included.
-  // Eggs and pet wear only have that one variant anyway, so a single join
-  // covers all three tabs. (Rising/Falling values at Normal Fly & Ride inside
-  // the get_movers RPC — deliberately different, do not "fix".)
-  //
-  // Fetched in FETCH_PAGE-row pages via .range() — Supabase REST silently
-  // caps a single select at 1,000 rows, and Pet Wear is already at ~954.
+  // Grid loader. Values come from current_pet_values, which now returns one
+  // row PER SOURCE — hence pickValue(rows, source) rather than [0].
   useEffect(() => {
+    if (valueSource == null) return; // wait for the preference
     let cancelled = false;
     async function load() {
       setLoading(true);
@@ -297,7 +302,7 @@ export default function Catalog() {
         const { data, error } = await supabase
           .from("pets")
           .select(`id, name, rarity, icon_url, category, demand,
-            pet_variants!inner ( neon, fly, ride, current_pet_values ( value ) )`)
+            pet_variants!inner ( neon, fly, ride, current_pet_values ( value, source ) )`)
           .eq("category", category)
           .eq("pet_variants.neon", "normal")
           .eq("pet_variants.fly", false)
@@ -307,7 +312,7 @@ export default function Catalog() {
         if (cancelled) return;
         if (error) { console.error(error); setLoading(false); return; }
         all.push(...(data ?? []));
-        if (!data || data.length < FETCH_PAGE) break; // short page → done
+        if (!data || data.length < FETCH_PAGE) break;
         from += FETCH_PAGE;
       }
       if (cancelled) return;
@@ -315,31 +320,31 @@ export default function Catalog() {
         id: p.id, name: p.name, rarity: p.rarity, icon_url: p.icon_url,
         category: (p.category ?? "pet") as Category,
         demand: p.demand ?? null,
-        value: p.pet_variants?.[0]?.current_pet_values?.[0]?.value ?? null,
+        value: pickValue(p.pet_variants?.[0]?.current_pet_values, valueSource!),
       })));
       setLoading(false);
     }
     load();
     return () => { cancelled = true; };
-  }, [category]);
+  }, [category, valueSource]);
 
+  // get_movers takes a source now (defaults to elvebredd server-side, but pass
+  // it explicitly so movers follow the user's chosen source.
   useEffect(() => {
-    supabase.rpc("get_movers", { window_hours: 168 }).then(({ data, error }) => {
+    if (valueSource == null) return;
+    supabase.rpc("get_movers", { window_hours: 168, p_source: valueSource }).then(({ data, error }) => {
       if (error) { console.error(error); return; }
       setMovers((data ?? []).map((r: any) => ({
         pet_id: r.pet_id, name: r.name, icon_url: r.icon_url,
         current_value: Number(r.current_value), change: Number(r.change),
       })));
     });
-  }, []);
+  }, [valueSource]);
 
-  // Any change that reshapes the grid resets incremental rendering back to
-  // the first slice — keeps the DOM small on weak devices.
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
   }, [category, search, rarityFilter, sortDir, tab]);
 
-  // Resolve graph access for the selected item (reactive — see v2 notes).
   useEffect(() => {
     if (!selected) return;
     if (!authChecked) { setAccess("pending"); return; }
@@ -362,17 +367,14 @@ export default function Catalog() {
     }
   }, [selected, authChecked, userId, premium]);
 
-  // Current value of the selected variant — shown next to the name in the
-  // modal header and refreshed whenever the tier/potion picks change. Values
-  // are public data (the grid already shows them), so this is NOT behind the
-  // graph gate; only the history graph is.
+  // Current value of the selected variant — source-filtered, same as the grid.
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || valueSource == null) return;
     let cancelled = false;
     setVariantValueLoading(true);
     supabase
       .from("pet_variants")
-      .select("id, current_pet_values ( value )")
+      .select("id, current_pet_values ( value, source )")
       .eq("pet_id", selected.id)
       .eq("neon", tier)
       .eq("fly", potion.fly)
@@ -380,15 +382,17 @@ export default function Catalog() {
       .limit(1)
       .then(({ data }) => {
         if (cancelled) return;
-        const v = (data?.[0] as any)?.current_pet_values?.[0]?.value;
-        setVariantValue(v == null ? null : Number(v));
+        setVariantValue(pickValue((data?.[0] as any)?.current_pet_values, valueSource));
         setVariantValueLoading(false);
       });
     return () => { cancelled = true; };
-  }, [selected, tier, potion]);
+  }, [selected, tier, potion, valueSource]);
 
+  // History. WITHOUT the source filter this would interleave Elvebredd and
+  // AMVGG points into one line — two different scales plotted together, which
+  // renders as violent fake volatility.
   useEffect(() => {
-    if (!selected || access !== "allowed") return;
+    if (!selected || access !== "allowed" || valueSource == null) return;
     const pet = selected;
     async function loadHistory() {
       setGraphLoading(true);
@@ -402,6 +406,7 @@ export default function Catalog() {
       const { data: vals } = await supabase
         .from("pet_values").select("value, recorded_at")
         .eq("pet_variant_id", variantId)
+        .eq("source", valueSource)
         .gte("recorded_at", cutoff)
         .order("recorded_at", { ascending: true });
       setHistory((vals ?? []).map((r: any) => ({
@@ -410,9 +415,8 @@ export default function Catalog() {
       setGraphLoading(false);
     }
     loadHistory();
-  }, [selected, tier, potion, range, access]);
+  }, [selected, tier, potion, range, access, valueSource]);
 
-  // modal open: lock body scroll + close on Escape
   useEffect(() => {
     if (!selected) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelected(null); };
@@ -435,13 +439,9 @@ export default function Catalog() {
       return sortDir === "desc" ? b.value - a.value : a.value - b.value;
     });
 
-  // only this slice is actually in the DOM; the sentinel below grows it
   const visible = filtered.slice(0, visibleCount);
   const hasMore = visibleCount < filtered.length;
 
-  // Auto-load the next slice when the sentinel scrolls into view. The
-  // Show-more button underneath does the same thing for browsers without
-  // IntersectionObserver (and as a manual fallback).
   useEffect(() => {
     if (tab !== "all" || loading || !hasMore) return;
     const el = sentinelRef.current;
@@ -452,7 +452,7 @@ export default function Catalog() {
           setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length));
         }
       },
-      { rootMargin: "600px 0px" } // start loading well before it's visible
+      { rootMargin: "600px 0px" }
     );
     io.observe(el);
     return () => io.disconnect();
@@ -463,18 +463,15 @@ export default function Catalog() {
 
   function openPet(pet: Pet) {
     setSelected(pet);
+    setVariantValue(null);
     setTier(DEFAULT_TIER);
-    // modal opens on the plain Normal / No-Potion variant so its value matches
-    // the number that was showing on the grid card the user just tapped
     setPotion(DEFAULT_POTION);
     setRange(RANGES[2]);
     setHistory([]);
-    setAccess("pending"); // resolved by the access effect
+    setAccess("pending");
   }
 
   function openMover(m: Mover) {
-    // get_movers doesn't return demand, so a modal opened from Rising/Falling
-    // just shows no hearts — acceptable; the grid card is the demand surface.
     openPet({ id: m.pet_id, name: m.name, rarity: null, icon_url: m.icon_url, value: m.current_value, category: "pet", demand: null });
   }
 
@@ -491,7 +488,6 @@ export default function Catalog() {
     </button>
   );
 
-  // The always-visible graph-access strip under the header.
   function AccessStrip() {
     if (!authChecked) {
       return <Skel className="mt-4 h-[52px] w-full rounded-xl" />;
@@ -593,12 +589,10 @@ export default function Catalog() {
     );
   }
 
-  // Blurred fake rows + overlay CTA shown to free users under the top 5.
   function MoversTeaser({ hidden, up }: { hidden: number; up: boolean }) {
     const accent = up ? "var(--up)" : "var(--down)";
     return (
       <div className="relative">
-        {/* decoy rows — pure decoration, no real data */}
         <div className="pointer-events-none select-none blur-[6px]" aria-hidden="true">
           {[0, 1, 2].map((i) => (
             <div key={i} className="grid grid-cols-[28px_40px_1fr_auto] items-center gap-3 px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-[color:var(--line)]">
@@ -613,7 +607,6 @@ export default function Catalog() {
           ))}
         </div>
 
-        {/* overlay CTA */}
         <div
           className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center"
           style={{ background: "linear-gradient(to bottom, transparent, rgba(10,6,20,0.55) 30%, rgba(10,6,20,0.75))" }}
@@ -636,12 +629,14 @@ export default function Catalog() {
     );
   }
 
-  // Full list for premium; real top FREE_MOVERS + teaser for everyone else.
   function MoverList({ list, up }: { list: Mover[]; up: boolean }) {
     if (list.length === 0) {
       return (
         <div className="petora-card ptrm-reveal p-8 text-center text-[color:var(--muted)]">
-          No {up ? "rising" : "falling"} pets in the last 7 days yet — this fills in as more history is collected.
+          No {up ? "rising" : "falling"} pets in the last 7 days yet
+          {valueSource === "amvgg"
+            ? " — Petora only started collecting AMVGG history recently, so this fills in over the next few weeks."
+            : " — this fills in as more history is collected."}
         </div>
       );
     }
@@ -681,7 +676,6 @@ export default function Catalog() {
     );
   }
 
-  // Free user out of graphs for today.
   function LockedGraph() {
     return (
       <div className="relative grid h-full place-items-center overflow-hidden rounded-xl border border-[color:var(--line)]">
@@ -712,7 +706,6 @@ export default function Catalog() {
     );
   }
 
-  // Not logged in — graphs live behind a free account.
   function LockedGraphAuth() {
     return (
       <div className="relative grid h-full place-items-center overflow-hidden rounded-xl border border-[color:var(--line)]">
@@ -811,9 +804,28 @@ export default function Catalog() {
         <p className="mt-2 text-sm text-[color:var(--muted)]">
           {loading ? "Loading" : `${filtered.length} ${CATEGORIES.find((c) => c.key === category)?.label.toLowerCase()}`} &middot; values shown are Normal, no potions &middot; tap one for details
         </p>
+        {/* Which list these numbers come from. With two scales live, a bare
+            number is ambiguous — someone who switches to AMVGG and sees 4.97
+            where they expected 22,000 needs to know why. */}
+        {valueSource && (
+          <Link
+            href="/settings"
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold transition hover:brightness-110 active:scale-95"
+            style={{
+              borderColor: `rgba(${SOURCE_META[valueSource].accent},0.5)`,
+              background: `rgba(${SOURCE_META[valueSource].accent},0.10)`,
+              color: `rgb(${SOURCE_META[valueSource].accent})`,
+            }}
+            title="Change your value source in Settings"
+          >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `rgb(${SOURCE_META[valueSource].accent})` }} aria-hidden="true" />
+            Values: {SOURCE_META[valueSource].label}
+            <span className="opacity-60" aria-hidden="true">·</span>
+            <span className="font-medium opacity-80">change</span>
+          </Link>
+        )}
       </div>
 
-      {/* graph access strip — always tells the visitor what their plan gets */}
       <AccessStrip />
 
       <div className="ptrm-reveal mt-6 mb-5 flex flex-wrap items-center justify-between gap-3" style={{ animationDelay: "60ms" }}>
@@ -832,7 +844,6 @@ export default function Catalog() {
 
       {tab === "all" && (
         <div key="all" className="ptrm-reveal">
-          {/* category pills */}
           <div className="mb-4 flex flex-wrap items-center gap-2">
             {CATEGORIES.map((c) => (
               <button
@@ -935,8 +946,6 @@ export default function Catalog() {
               <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
                 {visible.map((pet, idx) => {
                   const meta = rarityMeta(pet.rarity);
-                  // only the first slice gets staggered reveal delays; cards
-                  // loaded by scrolling appear immediately (no delay math)
                   const delay = idx < PAGE_SIZE ? Math.min(idx, 20) * 25 : 0;
                   return (
                     <div
@@ -977,8 +986,6 @@ export default function Catalog() {
                 })}
               </div>
 
-              {/* incremental-load footer: invisible sentinel auto-loads the
-                  next slice as you approach it; the button is the fallback */}
               {hasMore && (
                 <div className="mt-6 text-center">
                   <div ref={sentinelRef} aria-hidden="true" />
@@ -1076,7 +1083,7 @@ export default function Catalog() {
                     className="mt-0.5 text-xl font-bold leading-none text-[color:var(--lilac)] tabular-nums [font-family:var(--font-data)]"
                     aria-live="polite"
                   >
-                    {variantValue == null ? "\u2014" : fmt(animatedVariantValue)}
+                    {variantValue == null ? "\u2014" : fmt(variantValue)}
                   </div>
                 )}
               </div>
@@ -1089,7 +1096,6 @@ export default function Catalog() {
               </button>
             </div>
 
-            {/* demand strip — big, labeled, impossible to miss */}
             {selected.demand != null && (
               <div
                 className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3"
@@ -1107,8 +1113,6 @@ export default function Catalog() {
               </div>
             )}
 
-            {/* tier & potion pickers only make sense for pets — eggs and pet
-                wear have a single plain variant */}
             {selected.category === "pet" && (
               <>
                 <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">Type</div>
@@ -1186,10 +1190,10 @@ export default function Catalog() {
                     <LineChart data={history}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(168,139,250,0.12)" />
                       <XAxis dataKey="ts" tickFormatter={(t) => new Date(t).toLocaleDateString()} fontSize={12} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
-                      <YAxis tickFormatter={(v) => v.toLocaleString()} fontSize={12} width={60} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
+                      <YAxis tickFormatter={(v) => fmt(Number(v))} fontSize={12} width={60} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
                       <Tooltip
                         labelFormatter={(t) => new Date(t).toLocaleString()}
-                        formatter={(v: any) => [Number(v).toLocaleString(), "Value"]}
+                        formatter={(v: any) => [fmt(Number(v)), "Value"]}
                         contentStyle={{ background: "#1D1536", border: "1px solid rgba(168,139,250,0.28)", borderRadius: 10 }}
                         labelStyle={{ color: "#988FB0" }}
                         itemStyle={{ color: "#DDD6FE" }}

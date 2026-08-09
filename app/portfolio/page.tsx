@@ -1,6 +1,7 @@
 "use client";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type PetLite = { id: number; name: string; icon_url: string | null };
@@ -13,6 +14,30 @@ type Mover = {
   variantId: number; petId: number; name: string; icon_url: string | null;
   variantLabel: string; currentValue: number; change: number;
 };
+
+// ── VALUE SOURCE ─────────────────────────────────────────────────────────────
+// current_pet_values returns one row per (variant, source) now that AMVGG data
+// exists alongside Elvebredd. Reading [0] picks an arbitrary one, which is what
+// made the same pet appear twice at two different scales. Every read filters.
+//
+// Holdings follow the user's chosen source. Leaderboard SUBMISSIONS do not —
+// those stay Elvebredd server-side so ranks remain comparable between users.
+type ValueSource = "elvebredd" | "amvgg";
+const DEFAULT_SOURCE: ValueSource = "elvebredd";
+
+const SOURCE_META: Record<ValueSource, { label: string; accent: string }> = {
+  elvebredd: { label: "Elvebredd", accent: "168,85,247" },
+  amvgg:     { label: "AMVGG",     accent: "56,189,248" },
+};
+
+const pickValue = (rows: any, source: ValueSource): number | null => {
+  if (!Array.isArray(rows)) return null;
+  const hit = rows.find((r: any) => r?.source === source);
+  return hit?.value == null ? null : Number(hit.value);
+};
+
+// AMVGG values carry decimals (3.625). Rounding them away misprices holdings.
+const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
 const TIERS = [
   { key: "normal", label: "Normal" },
@@ -45,17 +70,12 @@ function variantLabel(neon: string, fly: boolean, ride: boolean): string {
 
 const MAX_QTY = 500; // hard cap on how many of one pet a single portfolio entry can hold
 
-// Parse the (string) qty field into a clean integer in [1, MAX_QTY].
-// Empty / non-numeric / <1 all fall back to 1; anything over the cap is clamped.
 function clampQty(raw: string | number): number {
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n) || n < 1) return 1;
   return Math.min(MAX_QTY, n);
 }
 
-// Animated count-up toward `target`. Eases out over `duration` ms via rAF.
-// Respects prefers-reduced-motion (snaps instantly). Re-animates from the
-// previous displayed value when the target changes, so add/remove feels alive.
 function useCountUp(target: number, duration = 800): number {
   const [display, setDisplay] = useState(0);
   const fromRef = useRef(0);
@@ -73,7 +93,8 @@ function useCountUp(target: number, duration = 800): number {
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
-      setDisplay(Math.round(from + (target - from) * eased));
+      // keep 3 decimals — AMVGG values are fractional
+      setDisplay(Math.round((from + (target - from) * eased) * 1000) / 1000);
       if (t < 1) raf = requestAnimationFrame(tick);
       else fromRef.current = target;
     };
@@ -84,12 +105,10 @@ function useCountUp(target: number, duration = 800): number {
   return display;
 }
 
-// Shimmering placeholder bar for loading states.
 function Skel({ className = "" }: { className?: string }) {
   return <div className={`ptr-skel rounded-md ${className}`} aria-hidden="true" />;
 }
 
-// Skeleton for a holdings/movers-style row inside a card.
 function SkelRow() {
   return (
     <div className="petora-card flex items-center gap-3 p-3">
@@ -111,13 +130,15 @@ export default function Portfolio() {
   const [authChecked, setAuthChecked] = useState(false);
   const [premium, setPremium] = useState(false);
   const [premiumChecked, setPremiumChecked] = useState(false);
+  // null = not resolved yet; every value read waits for it
+  const [valueSource, setValueSource] = useState<ValueSource | null>(null);
 
   const [pets, setPets] = useState<PetLite[]>([]);
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<PetLite | null>(null);
   const [tier, setTier] = useState<string>("normal");
   const [potion, setPotion] = useState<(typeof POTIONS)[number]>(POTIONS[0]);
-  const [quantity, setQuantity] = useState<string>("1"); // string: lets mobile clear the field mid-edit without snapping back to 1
+  const [quantity, setQuantity] = useState<string>("1");
   const [items, setItems] = useState<Item[]>([]);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [movers, setMovers] = useState<Mover[]>([]);
@@ -128,14 +149,17 @@ export default function Portfolio() {
   const [snapshotsLoading, setSnapshotsLoading] = useState(true);
   const [range, setRange] = useState<(typeof RANGES)[number]>(RANGES[4]); // default: All time
 
-  // who's logged in + premium status
+  // who's logged in + premium status + value source
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
       setUserId(data.user?.id ?? null);
       if (data.user) {
         const { data: prof } = await supabase
-          .from("profiles").select("is_premium").eq("id", data.user.id).single();
+          .from("profiles").select("is_premium, value_source").eq("id", data.user.id).single();
         setPremium(prof?.is_premium ?? false);
+        setValueSource(prof?.value_source === "amvgg" ? "amvgg" : DEFAULT_SOURCE);
+      } else {
+        setValueSource(DEFAULT_SOURCE);
       }
       setPremiumChecked(true);
       setAuthChecked(true);
@@ -149,11 +173,13 @@ export default function Portfolio() {
   }, []);
 
   // load this user's saved portfolio (all personal rows — manual + scan).
-  // unitValue comes from current_pet_values, so holdings always show the LIVE
-  // market value on load (nothing is frozen at add-time).
+  // unitValue comes from current_pet_values FOR THE CHOSEN SOURCE, so holdings
+  // always show the live market value on the scale the user picked.
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || valueSource == null) return;
+    let cancelled = false;
     async function loadItems() {
+      setItemsLoading(true);
       const { data } = await supabase
         .from("portfolio_items")
         .select(`
@@ -161,10 +187,11 @@ export default function Portfolio() {
           pet_variants (
             neon, fly, ride,
             pets ( id, name, icon_url ),
-            current_pet_values ( value )
+            current_pet_values ( value, source )
           )
         `)
         .eq("user_id", userId);
+      if (cancelled) return;
 
       const loaded: Item[] = (data ?? []).map((r: any) => {
         const pv = r.pet_variants;
@@ -174,7 +201,7 @@ export default function Portfolio() {
           name: pv.pets.name,
           icon_url: pv.pets.icon_url,
           variantLabel: variantLabel(pv.neon, pv.fly, pv.ride),
-          unitValue: Number(pv.current_pet_values?.[0]?.value ?? 0),
+          unitValue: pickValue(pv.current_pet_values, valueSource!) ?? 0,
           quantity: r.quantity,
         };
       });
@@ -182,32 +209,36 @@ export default function Portfolio() {
       setItemsLoading(false);
     }
     loadItems();
-  }, [userId]);
+    return () => { cancelled = true; };
+  }, [userId, valueSource]);
 
-  // load which of THIS user's pets moved up/down in value over the last 7 days.
-  // get_my_portfolio_movers mirrors the catalog's get_movers logic (most recent
-  // value step within the window), scoped to the variants this user owns.
-  // PREMIUM ONLY — free users see the locked upsell instead, so we don't even
-  // call the RPC for them (UI-side gating, consistent with the catalog).
+  // Which of THIS user's pets moved up/down over the last 7 days.
+  // PREMIUM ONLY — free users see the locked upsell, so we don't call the RPC.
   useEffect(() => {
-    if (!userId || !premiumChecked) return;
+    if (!userId || !premiumChecked || valueSource == null) return;
     if (!premium) { setMoversLoading(false); return; }
-    supabase.rpc("get_my_portfolio_movers", { window_hours: 168 }).then(({ data, error }) => {
-      if (error) { console.error(error); setMoversLoading(false); return; }
-      setMovers((data ?? []).map((r: any) => ({
-        variantId: r.pet_variant_id,
-        petId: r.pet_id,
-        name: r.name,
-        icon_url: r.icon_url,
-        variantLabel: variantLabel(r.neon, r.fly, r.ride),
-        currentValue: Number(r.current_value ?? 0),
-        change: Number(r.change ?? 0),
-      })));
-      setMoversLoading(false);
-    });
-  }, [userId, premium, premiumChecked]);
+    setMoversLoading(true);
+    supabase
+      .rpc("get_my_portfolio_movers", { window_hours: 168, p_source: valueSource })
+      .then(({ data, error }) => {
+        if (error) { console.error(error); setMoversLoading(false); return; }
+        setMovers((data ?? []).map((r: any) => ({
+          variantId: r.pet_variant_id,
+          petId: r.pet_id,
+          name: r.name,
+          icon_url: r.icon_url,
+          variantLabel: variantLabel(r.neon, r.fly, r.ride),
+          currentValue: Number(r.current_value ?? 0),
+          change: Number(r.change ?? 0),
+        })));
+        setMoversLoading(false);
+      });
+  }, [userId, premium, premiumChecked, valueSource]);
 
-  // load this user's net-worth history for the selected range (all sources — it's their own progress)
+  // net-worth history. NOTE: portfolio_snapshots stores a TOTAL computed at
+  // submit/scan time, which has always been on the Elvebredd scale. It is not
+  // re-priced per source — so an AMVGG user sees Elvebredd history here. That's
+  // why the chart is labelled explicitly below rather than silently mixing.
   useEffect(() => {
     if (!userId) return;
     setSnapshotsLoading(true);
@@ -233,7 +264,7 @@ export default function Portfolio() {
     : [];
 
   async function addToPortfolio() {
-    if (!picked || !userId) return;
+    if (!picked || !userId || valueSource == null) return;
     const pet = picked;
     setAdding(true);
     setAddError(null);
@@ -246,20 +277,17 @@ export default function Portfolio() {
     const label = variantLabel(tier, potion.fly, potion.ride);
     if (!variantId) { setAddError(`No ${label} variant exists for ${pet.name}.`); setAdding(false); return; }
 
+    // source filter: without it this returns two rows and picks one at random
     const { data: vVal } = await supabase
-      .from("current_pet_values").select("value").eq("pet_variant_id", variantId).limit(1);
+      .from("current_pet_values").select("value")
+      .eq("pet_variant_id", variantId)
+      .eq("source", valueSource)
+      .limit(1);
     const unitValue = vVal?.[0]?.value != null ? Number(vVal[0].value) : null;
     if (unitValue == null) { setAddError(`No value recorded yet for that variant.`); setAdding(false); return; }
 
     const qty = clampQty(quantity);
 
-    // Upsert-increment via RPC. Inserts a new MANUAL row, or — if this variant is
-    // already held manually — adds to the existing row's quantity (capped at 500).
-    // The function runs SECURITY DEFINER scoped to auth.uid(): it needs no UPDATE
-    // RLS policy and can never touch another user's rows (user_id is server-side).
-    // It only conflicts against source='manual' rows, so a scanned copy of the same
-    // variant is left untouched (a re-scan must be free to replace its own rows).
-    // Returns the resulting row { id, quantity }.
     const { data: rpcRows, error } = await supabase
       .rpc("add_manual_pet", { p_variant_id: variantId, p_qty: qty });
 
@@ -274,12 +302,10 @@ export default function Portfolio() {
     setItems((prev) => {
       const idx = prev.findIndex((x) => x.rowId === rowId);
       if (idx >= 0) {
-        // existing manual row was incremented — reflect the new total in place
         const next = [...prev];
         next[idx] = { ...next[idx], quantity: newQty };
         return next;
       }
-      // brand-new manual row
       return [...prev, {
         rowId, petId: pet.id, name: pet.name, icon_url: pet.icon_url,
         variantLabel: label, unitValue, quantity: newQty,
@@ -297,11 +323,9 @@ export default function Portfolio() {
   const total = items.reduce((s, i) => s + i.unitValue * i.quantity, 0);
   const animatedTotal = useCountUp(total);
 
-  // largest absolute change among movers — drives the magnitude bars
   const maxMove = movers.reduce((m, x) => Math.max(m, Math.abs(x.change)), 0);
+  const srcMeta = SOURCE_META[valueSource ?? DEFAULT_SOURCE];
 
-  // Scoped animation system for this page. ptr- prefix keeps it collision-free
-  // with the home/premium blocks; everything is guarded for reduced motion.
   const pageStyles = (
     <style>{`
       @keyframes ptrFadeUp {
@@ -392,7 +416,26 @@ export default function Portfolio() {
       <div className="ptr-reveal">
         <p className="petora-eyebrow">Your account</p>
         <h1 className="mt-1.5 text-3xl font-bold text-[color:var(--text)] [font-family:var(--font-display)]">My portfolio</h1>
-        <p className="mt-2 text-sm text-[color:var(--muted)]">Add your pets to track your total Elve value.</p>
+        <p className="mt-2 text-sm text-[color:var(--muted)]">
+          Add your pets to track what your board is worth.
+        </p>
+        {valueSource && (
+          <Link
+            href="/settings"
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold transition hover:brightness-110 active:scale-95"
+            style={{
+              borderColor: `rgba(${srcMeta.accent},0.5)`,
+              background: `rgba(${srcMeta.accent},0.10)`,
+              color: `rgb(${srcMeta.accent})`,
+            }}
+            title="Change your value source in Settings"
+          >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `rgb(${srcMeta.accent})` }} aria-hidden="true" />
+            Values: {srcMeta.label}
+            <span className="opacity-60" aria-hidden="true">·</span>
+            <span className="font-medium opacity-80">change</span>
+          </Link>
+        )}
       </div>
 
       {/* add a pet */}
@@ -463,7 +506,6 @@ export default function Portfolio() {
                     value={quantity}
                     onChange={(e) => {
                       const v = e.target.value;
-                      // allow an empty field while typing; accept digits only — never snap back to 1 mid-edit
                       if (v === "" || /^\d+$/.test(v)) setQuantity(v);
                     }}
                     onBlur={() => setQuantity(String(clampQty(quantity)))}
@@ -520,10 +562,10 @@ export default function Portfolio() {
                 <LineChart data={snapshots}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(168,139,250,0.12)" />
                   <XAxis dataKey="ts" tickFormatter={(t) => new Date(t).toLocaleDateString()} fontSize={12} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
-                  <YAxis tickFormatter={(v) => v.toLocaleString()} fontSize={12} width={70} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
+                  <YAxis tickFormatter={(v) => fmt(Number(v))} fontSize={12} width={70} tick={{ fill: "#988FB0" }} axisLine={{ stroke: "rgba(168,139,250,0.2)" }} tickLine={{ stroke: "rgba(168,139,250,0.2)" }} />
                   <Tooltip
                     labelFormatter={(t) => new Date(t).toLocaleString()}
-                    formatter={(v: any) => [Number(v).toLocaleString(), "Net worth"]}
+                    formatter={(v: any) => [fmt(Number(v)), "Net worth"]}
                     contentStyle={{ background: "#1D1536", border: "1px solid rgba(168,139,250,0.28)", borderRadius: 10 }}
                     labelStyle={{ color: "#988FB0" }}
                     itemStyle={{ color: "#DDD6FE" }}
@@ -532,6 +574,14 @@ export default function Portfolio() {
                 </LineChart>
               </ResponsiveContainer>
             </div>
+          )}
+          {/* Snapshots are totals frozen at scan/submit time on the Elvebredd
+              scale. Say so rather than let an AMVGG user think the chart and
+              the total below should match. */}
+          {valueSource === "amvgg" && snapshots.length > 1 && (
+            <p className="mt-2 text-[11.5px] text-[color:var(--muted)]">
+              History is recorded in Elvebredd values, so this chart won&apos;t match the AMVGG total below.
+            </p>
           )}
         </div>
       ) : (
@@ -549,10 +599,10 @@ export default function Portfolio() {
       <div className="petora-card ptr-reveal mb-5 p-6 text-center" style={{ animationDelay: "180ms" }}>
         <div className="text-sm text-[color:var(--muted)]">Total portfolio value</div>
         <div className="petora-gradient mt-1 text-4xl font-bold tabular-nums [font-family:var(--font-data)]">
-          {itemsLoading ? <Skel className="mx-auto h-10 w-40" /> : animatedTotal.toLocaleString()}
+          {itemsLoading ? <Skel className="mx-auto h-10 w-40" /> : fmt(animatedTotal)}
         </div>
         <div className="mt-1 text-[13px] text-[color:var(--muted)]">
-          {itemsLoading ? "\u00A0" : `${items.length} pet${items.length !== 1 ? "s" : ""}`}
+          {itemsLoading ? "\u00A0" : `${items.length} pet${items.length !== 1 ? "s" : ""} · ${srcMeta.label} values`}
         </div>
       </div>
 
@@ -591,13 +641,12 @@ export default function Portfolio() {
                         <div className="text-[12px] text-[color:var(--muted)]">{m.variantLabel}</div>
                       </div>
                       <div className="text-right tabular-nums [font-family:var(--font-data)]">
-                        <div className="font-bold text-[color:var(--lilac)]">{m.currentValue.toLocaleString()}</div>
+                        <div className="font-bold text-[color:var(--lilac)]">{fmt(m.currentValue)}</div>
                         <div className="text-[13px] font-bold" style={{ color: up ? "var(--up)" : "var(--down)" }}>
-                          {up ? "▲ +" : "▼ "}{m.change.toLocaleString()}
+                          {up ? "▲ +" : "▼ "}{fmt(m.change)}
                         </div>
                       </div>
                     </div>
-                    {/* magnitude bar — relative size of this move vs the biggest one */}
                     <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[rgba(168,139,250,0.10)]">
                       <div
                         className="ptr-bar h-full rounded-full"
@@ -616,7 +665,6 @@ export default function Portfolio() {
           </div>
         ) : null
       ) : (
-        /* locked upsell — mirrors the catalog's LockedMovers pattern */
         <div className="petora-card ptr-reveal mb-5 p-6 text-center" style={{ borderStyle: "dashed", animationDelay: "240ms" }}>
           <div className="ptr-lock-icon mx-auto mb-2 w-fit text-2xl" aria-hidden="true">🔒</div>
           <div className="font-semibold text-[color:var(--text)] [font-family:var(--font-display)]">Rising &amp; dropping pets in your portfolio</div>
@@ -655,10 +703,10 @@ export default function Portfolio() {
               {i.icon_url && <img src={i.icon_url} alt="" className="h-10 w-10 object-contain" />}
               <div className="min-w-0 flex-1">
                 <div className="truncate font-semibold text-[color:var(--text)]">{i.name}</div>
-                <div className="text-[13px] text-[color:var(--muted)]">{i.variantLabel} · {i.unitValue.toLocaleString()} each</div>
+                <div className="text-[13px] text-[color:var(--muted)]">{i.variantLabel} · {fmt(i.unitValue)} each</div>
               </div>
               <div className="text-right tabular-nums [font-family:var(--font-data)]">
-                <div className="font-bold text-[color:var(--lilac)]">{(i.unitValue * i.quantity).toLocaleString()}</div>
+                <div className="font-bold text-[color:var(--lilac)]">{fmt(i.unitValue * i.quantity)}</div>
                 <div className="text-[13px] text-[color:var(--muted)]">×{i.quantity}</div>
               </div>
               <button onClick={() => removeItem(i.rowId)}

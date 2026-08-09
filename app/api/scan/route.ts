@@ -378,9 +378,15 @@ export async function POST(req: Request) {
     const rows = allItems ?? [];
     if (rows.length) {
       const ids = rows.map((r) => r.pet_variant_id);
+      // Pinned to elvebredd, NOT the user's display preference. Snapshot totals
+      // are what the leaderboard ranks on and what the net-worth graph plots
+      // over time — both only make sense on one consistent scale. Without the
+      // filter this returns two rows per variant and the Map's last-write-wins
+      // silently picks whichever source came back last.
       const { data: vals } = await admin
         .from('current_pet_values')
         .select('pet_variant_id, value')
+        .eq('source', 'elvebredd')
         .in('pet_variant_id', ids);
       const valueById = new Map<number, number>();
       for (const v of vals ?? []) valueById.set(v.pet_variant_id, Number(v.value));

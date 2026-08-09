@@ -81,7 +81,7 @@ export default function SignUp() {
     });
     setLoading(false);
     if (error) return setMsg(error.message);
-    if (data.session) router.push("/portfolio");
+    if (data.session) router.push("/welcome");
     else setMsg("Account created. Check your email to confirm, then log in.");
   }
 

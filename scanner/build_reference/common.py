@@ -568,13 +568,20 @@ def boards_from_pages(pages):
 # ======================================================================
 # Valuation
 # ======================================================================
-def _supa_get(url, key, table, select, page=1000):
+def _supa_get(url, key, table, select, page=1000, eq=None):
+    """Paginated PostgREST GET. `eq` adds column=eq.value filters.
+
+    Pagination is mandatory: PostgREST caps every select at 1,000 rows
+    regardless of the limit asked for.
+    """
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     rows, offset = [], 0
     while True:
+        params = {"select": select, "limit": page, "offset": offset}
+        for col, val in (eq or {}).items():
+            params[col] = f"eq.{val}"
         r = requests.get(f"{url.rstrip('/')}/rest/v1/{table}", headers=headers,
-                         params={"select": select, "limit": page, "offset": offset},
-                         timeout=30)
+                         params=params, timeout=30)
         r.raise_for_status()
         batch = r.json()
         rows.extend(batch)
@@ -588,10 +595,21 @@ def fetch_variant_map(url, key):
             for v in _supa_get(url, key, "pet_variants", "id,pet_id,neon,fly,ride")}
 
 
-def fetch_value_map(url, key):
-    return {r["pet_variant_id"]: r["value"]
-            for r in _supa_get(url, key, "current_pet_values", "pet_variant_id,value")}
+# Pinned to Elvebredd. pet_values now carries both Elvebredd and AMVGG rows and
+# current_pet_values returns one row PER SOURCE, so an unfiltered read gives two
+# rows per variant — and this dict comprehension would silently keep whichever
+# arrived last, mixing two incompatible scales inside one portfolio total.
+#
+# NOT the user's display preference: this total is written to
+# portfolio_snapshots and ranked on the leaderboard, which is only meaningful if
+# every user's number is on the same scale.
+VALUE_SOURCE = "elvebredd"
 
+
+def fetch_value_map(url, key, source=VALUE_SOURCE):
+    return {r["pet_variant_id"]: r["value"]
+            for r in _supa_get(url, key, "current_pet_values",
+                               "pet_variant_id,value", eq={"source": source})}
 
 def value_portfolio(items, variant_map, value_map):
     rows, missing = [], []
