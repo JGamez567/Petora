@@ -8,6 +8,44 @@ import { AvatarCircle } from "@/lib/avatars";
 
 type Row = { rank: number; user_id: string; username: string; total_value: number; is_premium: boolean };
 
+// ⚠️ VERIFY THIS URL before shipping — I don't have it confirmed anywhere in
+// the codebase, only the scraper's internal reference to their "Baseless" tab.
+// If it's wrong, the credit link 404s and that's worse than no link at all.
+const AMVGG_URL = "https://amvgg.com/";
+const ELVEBREDD_URL = "https://elvebredd.com/";
+
+// Attribution. Elvebredd is THE value scale for Petora — catalog, portfolio,
+// leaderboard, net worth, everything. AMVGG supplies the demand hearts (and,
+// once the dual-verdict calculator ships, a second opinion on trades). Both
+// get credited because we scrape both; neither is affiliated with us.
+const sources = [
+  {
+    name: "Elvebredd",
+    href: ELVEBREDD_URL,
+    role: "Pet values",
+    tint: "168,85,247",
+    body: "Every value on Petora comes from Elvebredd — the community-built value list that's been the Adopt Me trading standard since 2022. We don't set prices; Elve does, and Petora keeps your portfolio synced to them.",
+    icon: (
+      <>
+        <path d="M4 18l5-5 3 3 7-7" />
+        <path d="M16 9h3v3" />
+      </>
+    ),
+  },
+  {
+    name: "AMVGG",
+    href: AMVGG_URL,
+    role: "Demand ratings",
+    tint: "56,189,248",
+    body: "The demand hearts on every pet come from AMVGG, updated daily by traders who weigh what's actually moving — because a pet can be worth a lot and still be near-impossible to trade away.",
+    icon: (
+      <>
+        <path d="M12 20s-7-4.6-7-9.2A4.1 4.1 0 0 1 12 8a4.1 4.1 0 0 1 7 2.8C19 15.4 12 20 12 20Z" />
+      </>
+    ),
+  },
+];
+
 // The three feature cards double as the onboarding flow — they really are steps
 // (scan → track → rank), so they carry step numbers.
 const features = [
@@ -311,6 +349,12 @@ export default function Home() {
         .ptr-quick .ptr-arrow { display:inline-block; transition: transform .22s ease; }
         .ptr-quick:hover .ptr-arrow { transform: translateX(4px); }
 
+        /* ── source credit cards ── */
+        .ptr-src { transition: transform .25s cubic-bezier(.22,1,.36,1), border-color .25s ease; }
+        .ptr-src:hover { transform: translateY(-3px); }
+        .ptr-src .ptr-arrow { display:inline-block; transition: transform .22s ease; }
+        .ptr-src:hover .ptr-arrow { transform: translateX(3px); }
+
         @media (prefers-reduced-motion: reduce) {
           .ptr-fade,.ptr-twinkle,.ptr-float,.ptr-shimmer,.ptr-draw,.ptr-pulse,.ptr-glow,
           .ptr-aurora,.ptr-orbit,.ptr-blink {
@@ -327,6 +371,8 @@ export default function Home() {
           .ptr-quick .ptr-sweep { display:none!important; }
           .ptr-quick .ptr-qicon, .ptr-quick:hover .ptr-qicon { transform:none!important; transition:none!important; }
           .ptr-quick .ptr-arrow, .ptr-quick:hover .ptr-arrow { transform:none!important; transition:none!important; }
+          .ptr-src, .ptr-src:hover { transform:none!important; transition:none!important; }
+          .ptr-src .ptr-arrow, .ptr-src:hover .ptr-arrow { transform:none!important; transition:none!important; }
         }
         @media (hover: none) {
           .ptr-quick::before { display:none; }
@@ -544,39 +590,59 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Elvebredd credit — prominent values-source attribution */}
+      {/* ── DATA CREDIT ──────────────────────────────────────────────────────
+          Petora scrapes two community lists and neither one owes us anything,
+          so both get named on the front page. Elvebredd is the value scale for
+          the whole site; AMVGG supplies the demand hearts. Keep the "not
+          affiliated" line — it's the part that actually matters legally. */}
       <section className="ptr-sr mt-16" data-reveal>
         <div className="petora-card relative overflow-hidden p-6 sm:p-7" style={{ borderColor: "var(--line-2)", boxShadow: "0 24px 60px -34px rgba(124,58,237,0.5)" }}>
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="max-w-2xl">
-              <p className="petora-eyebrow">Pet values powered by</p>
-              <h2 className="mt-2 text-[28px] font-bold leading-none [font-family:var(--font-display)]">
-                <span className="petora-gradient">Elvebredd</span>
-              </h2>
-              <p className="mt-3 text-[14.5px] leading-relaxed text-[color:var(--muted)]">
-                Every value in Petora comes straight from{" "}
-                <a
-                  href="https://elvebredd.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-semibold text-[color:var(--lilac)] underline decoration-[color:var(--line-2)] underline-offset-2 transition hover:text-[color:var(--violet-bright)]"
-                >
-                  Elvebredd
-                </a>{" "}
-                — the community-built value list and Win/Fair/Lose calculator that&apos;s been the
-                Adopt Me trading standard since 2022. We don&apos;t set prices; Elve does, and Petora
-                keeps your portfolio synced to them.
-              </p>
-            </div>
-            <a
-              href="https://elvebredd.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ptr-cta inline-flex flex-none items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-[#1a1030] shadow-[0_12px_34px_-12px_rgba(168,85,247,0.7)] [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
-            >
-              Visit Elvebredd <span className="ptr-arrow">→</span>
-            </a>
+          <p className="petora-eyebrow">Where the numbers come from</p>
+          <h2 className="mt-2 text-[26px] font-bold leading-tight text-[color:var(--text)] [font-family:var(--font-display)]">
+            Built on <span className="petora-gradient">community data</span> — credited.
+          </h2>
+          <p className="mt-2.5 max-w-2xl text-[14.5px] leading-relaxed text-[color:var(--muted)]">
+            Petora doesn&apos;t decide what your pets are worth. Two community-run lists do, and Petora
+            keeps your portfolio synced to them.
+          </p>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            {sources.map((s) => (
+              <a
+                key={s.name}
+                href={s.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ptr-src flex flex-col rounded-2xl p-5"
+                style={{ background: `rgba(${s.tint},0.06)`, border: `1px solid rgba(${s.tint},0.28)` }}
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className="grid h-10 w-10 flex-none place-items-center rounded-xl"
+                    style={{ background: `rgba(${s.tint},0.14)`, border: `1px solid rgba(${s.tint},0.35)`, color: `rgb(${s.tint})` }}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      {s.icon}
+                    </svg>
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">{s.role}</p>
+                    <h3 className="text-[19px] font-bold leading-tight text-[color:var(--text)] [font-family:var(--font-display)]">
+                      {s.name}
+                    </h3>
+                  </div>
+                </div>
+                <p className="mt-3 flex-1 text-[13.5px] leading-relaxed text-[color:var(--muted)]">{s.body}</p>
+                <span className="mt-4 inline-flex items-center gap-1.5 text-[13.5px] font-semibold" style={{ color: `rgb(${s.tint})` }}>
+                  Visit {s.name} <span className="ptr-arrow">→</span>
+                </span>
+              </a>
+            ))}
           </div>
+
+          <p className="mt-5 text-[12.5px] leading-relaxed text-[color:var(--muted)]">
+            Petora is an independent project and is not affiliated with Elvebredd, AMVGG, Adopt Me or Roblox.
+          </p>
         </div>
       </section>
 
@@ -701,16 +767,26 @@ export default function Home() {
         </div>
       </section>
 
-      {/* values attribution — Elvebredd powers our pet values */}
-      <p className="mt-20 text-center text-[13px] text-[color:var(--muted)]">
-        Pet values powered by{" "}
+      {/* footer attribution — values and demand come from different places */}
+      <p className="mt-20 text-center text-[13px] leading-relaxed text-[color:var(--muted)]">
+        Pet values by{" "}
         <a
-          href="https://elvebredd.com/"
+          href={ELVEBREDD_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="font-semibold text-[color:var(--lilac)] underline decoration-[color:var(--line-2)] underline-offset-2 transition hover:text-[color:var(--violet-bright)]"
         >
           Elvebredd
+        </a>
+        <span className="mx-2 opacity-50">·</span>
+        Demand ratings by{" "}
+        <a
+          href={AMVGG_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-semibold text-[#38BDF8] underline decoration-[color:var(--line-2)] underline-offset-2 transition hover:brightness-125"
+        >
+          AMVGG
         </a>
       </p>
 

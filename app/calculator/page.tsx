@@ -6,6 +6,45 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type Category = "pet" | "egg" | "pet_wear";
+
+// ── VALUE SOURCE ─────────────────────────────────────────────────────────────
+// Petora is an Elvebredd site everywhere else — catalog, portfolio, scanner,
+// leaderboard. The calculator is the ONE place AMVGG appears, and it appears
+// as a LENS over the board you already built, not as a stored preference.
+//
+// Why that matters: the old behaviour read profiles.value_source and CLEARED
+// BOTH BOARDS whenever it changed, because a total mixing two scales is
+// nonsense. That rule is now unnecessary rather than violated — every pet
+// carries BOTH values from the moment it's added, so switching re-reads the
+// board instead of re-pricing it. The two scales never meet in one sum.
+//
+// A Frost Dragon is ~308 on Elvebredd and 1.675 on AMVGG (AMVGG denominates
+// in Frost Dragons — 0.5 means half a Frost Dragon). Never compare the
+// NUMBERS across sources. Compare the VERDICTS.
+type ValueSource = "elvebredd" | "amvgg";
+const DEFAULT_SOURCE: ValueSource = "elvebredd";
+
+const SOURCE_META: Record<ValueSource, {
+  label: string; accent: string; site: string; blurb: string;
+}> = {
+  elvebredd: {
+    label: "Elvebredd",
+    accent: "168,85,247",
+    site: "https://elvebredd.com",
+    blurb: "The list most traders quote. Every other page on Petora uses these values.",
+  },
+  amvgg: {
+    label: "AMVGG",
+    accent: "56,189,248",
+    site: "https://amvgg.com",
+    blurb: "Updated daily from real trades. Runs on a smaller scale — the numbers look tiny, the verdict is what matters.",
+  },
+};
+
+// Every value we hold, on both scales. null = that list has no price for this
+// exact variant. Missing is NOT zero and must never be silently treated as it.
+type SourceValues = { elvebredd: number | null; amvgg: number | null };
+
 type CatalogItem = {
   id: number;
   name: string;
@@ -13,21 +52,21 @@ type CatalogItem = {
   icon_url: string | null;
   category: Category;
   demand: number | null;
-  baseValue: number | null; // Normal / No-Potion value on the DISPLAYED source
-  highTier: boolean;        // pet's NORMAL FLY & RIDE Elvebredd value >= HIGH_TIER_ELVE
+  values: SourceValues; // Normal / No-Potion, both sources
+  highTier: boolean;    // pet's NORMAL FLY & RIDE Elvebredd value >= HIGH_TIER_ELVE
 };
 
 type TierKey = "normal" | "neon" | "mega";
 
-// One pet placed on the trade board: the item + the exact variant + its value.
+// One pet placed on the trade board: the item + the exact variant + BOTH values.
 type CalcItem = {
   uid: number;          // unique per placement (same pet can be added twice)
   item: CatalogItem;
   tier: TierKey;
   fly: boolean;
   ride: boolean;
-  value: number;
-  highTier: boolean;   // this exact variant is >= HIGH_TIER_ELVE on Elvebredd
+  values: SourceValues;
+  highTier: boolean;
 };
 
 // 18 pets per side; the board shows 3×3 and scrolls for the rest.
@@ -42,6 +81,9 @@ const MAX_QTY = 9;
 // a low-demand pet is worth less in the real trading market than its listed
 // value because it's harder to move. Unrated pets get no penalty — missing
 // data isn't low demand.
+//
+// Demand comes from AMVGG in BOTH modes. It's a property of the pet, not of
+// the price list you're reading, so it applies identically either way.
 //
 // These are trader heuristics, not measured market data. They're deliberately
 // firm: a 1-heart pet routinely sits in inventory for weeks, so treating it as
@@ -61,14 +103,11 @@ const DEMAND_LABELS = ["", "Low", "Medium", "High"] as const;
 //   - NOT the placed variant's value. A 20-value pet that reaches 100 as a Mega
 //     is a cheap pet with an expensive form, not a high tier. The rating belongs
 //     to the PET and applies to every variant of it equally.
-//   - NOT measured on AMVGG, even when the user is viewing AMVGG prices. High
-//     tier is a property of the pet, not of the scale you read it on, and
-//     hardcoding an AMVGG-equivalent threshold would mean guessing a conversion
-//     ratio that drifts every time either list updates.
-//
-// Normal Fly & Ride is the same canonical variant get_movers uses, so "what is
-// this pet worth" means the same thing across the site. (The catalog GRID still
-// displays Normal / No-Potion — that difference is intentional, invariant #6.)
+//   - NOT measured on AMVGG, even while you're viewing AMVGG prices. High tier
+//     is a property of the pet, not of the scale you read it on, and hardcoding
+//     an AMVGG-equivalent threshold would mean guessing a conversion ratio that
+//     drifts every time either list updates. This is why the badge doesn't move
+//     when you flip the source.
 const HIGH_TIER_ELVE = 100;
 // A high-tier pet's demand rating is treated as this much higher (capped at
 // MAX_DEMAND) before the multiplier applies. +1 turns a 1-heart high tier from
@@ -102,28 +141,21 @@ const spreadFactor = (mine: number, theirs: number) =>
 // Verdict thresholds on the demand-adjusted totals: within ±FAIR_BAND = Fair.
 const FAIR_BAND = 0.05;
 
-// ── VALUE SOURCE ─────────────────────────────────────────────────────────────
-// pet_values holds BOTH Elvebredd and AMVGG rows, and current_pet_values
-// returns one row per (variant, source). Every value read MUST pick a source
-// explicitly — without it, current_pet_values[0] grabs whichever row comes
-// back first and the calculator silently mixes two completely different
-// scales (a Frost Dragon is thousands on Elvebredd, 1.675 on AMVGG Baseless).
-//
-// Read from profiles.value_source; anonymous visitors get Elvebredd.
-type ValueSource = "elvebredd" | "amvgg";
-const DEFAULT_SOURCE: ValueSource = "elvebredd";
-
-const SOURCE_META: Record<ValueSource, { label: string; accent: string; site: string }> = {
-  elvebredd: { label: "Elvebredd", accent: "168,85,247", site: "https://elvebredd.com" },
-  amvgg:     { label: "AMVGG",     accent: "56,189,248", site: "https://amvgg.com" },
-};
-
 // Pull the value for `source` out of an embedded current_pet_values array.
+// current_pet_values returns ONE ROW PER (variant, source) — indexing [0]
+// grabs whichever row happens to arrive first, which is how the whole
+// multi-source bug class started. Always filter by source explicitly.
 const pickValue = (rows: any, source: ValueSource): number | null => {
   if (!Array.isArray(rows)) return null;
   const hit = rows.find((r: any) => r?.source === source);
   return hit?.value == null ? null : Number(hit.value);
 };
+
+// Both scales in one pass, from the same embedded rows. No extra queries.
+const pickBoth = (rows: any): SourceValues => ({
+  elvebredd: pickValue(rows, "elvebredd"),
+  amvgg: pickValue(rows, "amvgg"),
+});
 
 const FETCH_PAGE = 1000;
 // picker renders in slices as you scroll — keeps the DOM light with 750+ tiles
@@ -135,8 +167,8 @@ const PICKER_PAGE = 48;
 // This constant is only a UI fallback label; the server is the source of truth.
 const FREE_DEMAND_PER_DAY = 3;
 
-// Values carry decimals (a Turtle is 22.5, not 23) — never round them away.
-// Up to 2 decimal places, trailing zeros dropped, thousands separated.
+// Values carry decimals (a Turtle is 22.5, not 23; AMVGG prices like 3.625
+// need all three) — never round them away.
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 3 });
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -224,10 +256,21 @@ function Skel({ className = "" }: { className?: string }) {
 }
 
 // rAF count-up (snaps under reduced motion).
-function useCountUp(target: number, duration = 500): number {
+//
+// `resetKey` snaps instead of animating when it changes. Flipping the value
+// source moves a total from 308 to 1.675; sliding between two scales reads as
+// a glitch and briefly displays numbers that mean nothing on either list.
+function useCountUp(target: number, duration = 500, resetKey?: string | number): number {
   const [display, setDisplay] = useState(0);
   const fromRef = useRef(0);
+  const keyRef = useRef(resetKey);
   useEffect(() => {
+    if (keyRef.current !== resetKey) {
+      keyRef.current = resetKey;
+      fromRef.current = target;
+      setDisplay(target);
+      return;
+    }
     const reduce =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -245,7 +288,7 @@ function useCountUp(target: number, duration = 500): number {
     };
     raf = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(raf); fromRef.current = target; };
-  }, [target, duration]);
+  }, [target, duration, resetKey]);
   return display;
 }
 
@@ -256,6 +299,15 @@ export default function Calculator() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
 
+  // Which list we're READING. Local UI state only — deliberately not persisted
+  // to profiles.value_source and not read from it. Every visit starts on
+  // Elvebredd; AMVGG is a deliberate "check this trade again" action, not a
+  // setting someone can leave switched on and forget about.
+  const [source, setSource] = useState<ValueSource>(DEFAULT_SOURCE);
+  const meta = SOURCE_META[source];
+  const other: ValueSource = source === "elvebredd" ? "amvgg" : "elvebredd";
+  const otherMeta = SOURCE_META[other];
+
   // Demand-bar gate. The daily free-check limit is enforced SERVER-SIDE and
   // read on load via get_demand_status(); revealing spends one via
   // spend_demand_check(). remaining=null means unlimited (premium).
@@ -265,22 +317,11 @@ export default function Calculator() {
   const [demandRemaining, setDemandRemaining] = useState<number | null>(0); // null = unlimited
   const [demandShown, setDemandShown] = useState(false); // revealed this session
   const [revealBusy, setRevealBusy] = useState(false);
-  // null = preference not resolved yet; the picker waits for it rather than
-  // showing Elvebredd prices that then swap to AMVGG.
-  const [valueSource, setValueSource] = useState<ValueSource | null>(null);
 
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
-      const uid = data.user?.id ?? null;
-      setUserId(uid);
-      if (uid) {
-        const { data: prof } = await supabase
-          .from("profiles").select("value_source").eq("id", uid).single();
-        setValueSource(prof?.value_source === "amvgg" ? "amvgg" : DEFAULT_SOURCE);
-      } else {
-        setValueSource(DEFAULT_SOURCE);
-      }
+      setUserId(data.user?.id ?? null);
       const { data: status } = await supabase.rpc("get_demand_status");
       if (status) {
         setPremium(!!status.premium);
@@ -311,12 +352,14 @@ export default function Calculator() {
   const [dRide, setDRide] = useState(true);
   const [dQty, setDQty] = useState(1);
   const [qtyOpen, setQtyOpen] = useState(false);
-  // undefined = still resolving, null = no value exists for this variant
-  const [dValue, setDValue] = useState<number | null | undefined>(undefined);
+  // undefined = still resolving, otherwise both scales for the chosen variant
+  const [dValues, setDValues] = useState<SourceValues | undefined>(undefined);
 
   // Cache of variant values so re-toggling back and forth doesn't refetch.
-  // Key = `${petId}|${tier}|${fly}|${ride}`.
-  const [variantValues, setVariantValues] = useState<Map<string, number | null>>(new Map());
+  // Key = `${petId}|${tier}|${fly}|${ride}`. Holds BOTH scales, so flipping
+  // the source never invalidates it — that's why there's no cache-clearing
+  // effect any more.
+  const [variantValues, setVariantValues] = useState<Map<string, SourceValues>>(new Map());
   const vkey = (id: number, t: TierKey, f: boolean, r: boolean) => `${id}|${t}|${f}|${r}`;
 
   // ── load the catalog once (paginated past the 1,000-row REST cap) ─────────
@@ -324,8 +367,10 @@ export default function Calculator() {
   // spans all three categories and Elvebredd reuses names across categories,
   // so name alone can duplicate rows across pages. name+id is unique; the Map
   // dedupes as a second line of defense.
+  //
+  // Runs ONCE, not per source: current_pet_values already returns both rows
+  // per variant, so both scales come back in the same request.
   useEffect(() => {
-    if (valueSource == null) return; // wait for the preference
     let cancelled = false;
     async function load() {
       setCatalogLoading(true);
@@ -382,14 +427,14 @@ export default function Calculator() {
         id: p.id, name: p.name, rarity: p.rarity, icon_url: p.icon_url,
         category: (p.category ?? "pet") as Category,
         demand: p.demand ?? null,
-        baseValue: pickValue(p.pet_variants?.[0]?.current_pet_values, valueSource!),
+        values: pickBoth(p.pet_variants?.[0]?.current_pet_values),
         highTier: highTierIds.has(p.id),
       })));
       setCatalogLoading(false);
     }
     load();
     return () => { cancelled = true; };
-  }, [valueSource]);
+  }, []);
 
   const sideList = pickerSide === "you" ? you : them;
   const slotsLeft = pickerSide == null ? 0 : MAX_PER_SIDE - sideList.length;
@@ -428,25 +473,15 @@ export default function Calculator() {
   // reveal spends another server-side check. Tweaking a trade in place (adding
   // or removing a pet while something is still on the board) deliberately does
   // NOT re-lock — that's the affordance the reveal is meant to buy.
+  //
+  // Flipping the value source does NOT re-lock either, and does not spend a
+  // second check: it's the same trade being read off a second list, which is
+  // the entire point of the feature. One check buys both verdicts.
   useEffect(() => {
     if (you.length === 0 && them.length === 0 && demandShown) {
       setDemandShown(false);
     }
   }, [you.length, them.length, demandShown]);
-
-  // Switching value source invalidates everything already priced: the variant
-  // cache holds old-scale numbers, and so do any pets already on the boards.
-  // Mixing 4.97 and 22,000 in one total would produce a nonsense verdict.
-  const prevSourceRef = useRef<ValueSource | null>(null);
-  useEffect(() => {
-    if (valueSource == null) return;
-    if (prevSourceRef.current != null && prevSourceRef.current !== valueSource) {
-      setVariantValues(new Map());
-      setYou([]);
-      setThem([]);
-    }
-    prevSourceRef.current = valueSource;
-  }, [valueSource]);
 
   // search / category change → back to the first slice, scrolled to top
   useEffect(() => {
@@ -470,12 +505,12 @@ export default function Calculator() {
     setDFly(isPet);
     setDRide(isPet);
     setDQty(1);
-    setDValue(undefined);
+    setDValues(undefined);
   }
 
   // Resolve the value of the exact variant currently selected in the detail
-  // modal. Normal / No-Potion (and every non-pet) is already loaded as
-  // baseValue — no query needed.
+  // modal, on BOTH scales. Normal / No-Potion (and every non-pet) is already
+  // loaded as part of the catalog row — no query needed.
   useEffect(() => {
     if (!detail) return;
     const isPet = detail.category === "pet";
@@ -483,13 +518,13 @@ export default function Calculator() {
     const f = isPet ? dFly : false;
     const r = isPet ? dRide : false;
 
-    // Normal / No-Potion (and every non-pet) is already loaded from the catalog
-    if (!isPet || (t === "normal" && !f && !r)) { setDValue(detail.baseValue); return; }
+    if (!isPet || (t === "normal" && !f && !r)) { setDValues(detail.values); return; }
     const k = vkey(detail.id, t, f, r);
-    if (variantValues.has(k)) { setDValue(variantValues.get(k) ?? null); return; }
+    const cached = variantValues.get(k);
+    if (cached) { setDValues(cached); return; }
 
     let cancelled = false;
-    setDValue(undefined);
+    setDValues(undefined);
     (async () => {
       const { data } = await supabase
         .from("pet_variants")
@@ -500,12 +535,12 @@ export default function Calculator() {
         .eq("ride", r)
         .limit(1);
       if (cancelled) return;
-      const v = pickValue((data?.[0] as any)?.current_pet_values, valueSource!);
+      const v = pickBoth((data?.[0] as any)?.current_pet_values);
       setVariantValues((prev) => new Map(prev).set(k, v));
-      setDValue(v);
+      setDValues(v);
     })();
     return () => { cancelled = true; };
-  }, [detail, dTier, dFly, dRide, valueSource]);
+  }, [detail, dTier, dFly, dRide]);
 
   // clamp quantity if the side fills up while the modal is open
   useEffect(() => {
@@ -515,10 +550,17 @@ export default function Calculator() {
   // close the qty list whenever the detail modal opens/closes
   useEffect(() => { setQtyOpen(false); }, [detail]);
 
+  // Adding requires an ELVEBREDD value. Elvebredd is the canonical scale for
+  // the whole site, and a pet with no Elvebredd price is one Petora can't
+  // really account for. A missing AMVGG price is fine and expected — AMVGG
+  // history only starts 2026-08-08 and a few names never matched at all — so
+  // those pets are allowed onto the board and flagged in the AMVGG verdict.
+  const detailAddable = dValues != null && dValues.elvebredd != null;
+
   // Select → add `dQty` copies, then TAB OUT of both modals. Adding another
   // pet means pressing the + slot again (per the redesign).
   function confirmSelect() {
-    if (!detail || !pickerSide || dValue == null || dValue === undefined) return;
+    if (!detail || !pickerSide || !dValues || dValues.elvebredd == null) return;
     const isPet = detail.category === "pet";
     const t: TierKey = isPet ? dTier : "normal";
     const f = isPet ? dFly : false;
@@ -532,7 +574,8 @@ export default function Calculator() {
     // every variant of a high-tier pet carries the flag and no variant of a
     // cheap pet earns it.
     const entries: CalcItem[] = Array.from({ length: n }, () => ({
-      uid: uidRef.current++, item: detail, tier: t, fly: f, ride: r, value: dValue,
+      uid: uidRef.current++, item: detail, tier: t, fly: f, ride: r,
+      values: dValues,
       highTier: detail.highTier,
     }));
 
@@ -555,13 +598,24 @@ export default function Calculator() {
   }
 
   // ── the math ──────────────────────────────────────────────────────────────
+  // Everything below reads i.values[source]. A pet with no price on the active
+  // list contributes NOTHING to the totals (it can't — there's no number) but
+  // still counts as a pet for the spread penalty, because it's still a pet
+  // changing hands. That combination is why the missing-value warning is
+  // prominent rather than a footnote.
   const calc = useMemo(() => {
-    const sum = (list: CalcItem[]) => list.reduce((a, i) => a + i.value, 0);
+    const val = (i: CalcItem) => i.values[source] ?? 0;
+    const sum = (list: CalcItem[]) => list.reduce((a, i) => a + val(i), 0);
     const sumAdj = (list: CalcItem[]) =>
-      list.reduce((a, i) => a + i.value * demandMult(i.item.demand, i.highTier), 0);
+      list.reduce((a, i) => a + val(i) * demandMult(i.item.demand, i.highTier), 0);
 
     const youRaw = sum(you);
     const themRaw = sum(them);
+
+    // pets on the board with no price on the ACTIVE list
+    const missingYou = you.filter((i) => i.values[source] == null).length;
+    const missingThem = them.filter((i) => i.values[source] == null).length;
+    const missing = missingYou + missingThem;
 
     // demand weighting, then the offer-shape penalty on whichever side is
     // stacking more pets
@@ -626,11 +680,11 @@ export default function Calculator() {
       demandNote = shift ? `${shift} — ${body}.` : `Worth knowing: ${body}.`;
     }
 
-    return { youRaw, themRaw, youAdj, themAdj, ratioAdj, verdict, rawVerdict, meterPos, meterPosRaw, demandNote, empty };
-  }, [you, them]);
+    return { youRaw, themRaw, youAdj, themAdj, ratioAdj, verdict, rawVerdict, meterPos, meterPosRaw, demandNote, empty, missing, missingYou, missingThem };
+  }, [you, them, source]);
 
-  const youDisplay = useCountUp(calc.youRaw);
-  const themDisplay = useCountUp(calc.themRaw);
+  const youDisplay = useCountUp(calc.youRaw, 500, source);
+  const themDisplay = useCountUp(calc.themRaw, 500, source);
 
   // Headline verdict: VALUE-only until the demand bar is unlocked (premium, or
   // a free user who spent a try), then it upgrades to the demand-adjusted
@@ -669,15 +723,15 @@ export default function Calculator() {
     }
   }
 
-  // Picker list: filtered, then sorted BIGGEST value first (no-value items
-  // sink to the bottom). The whole catalog is reachable — tiles render in
-  // slices of PICKER_PAGE as you scroll, so the DOM stays light.
+  // Picker list: filtered, then sorted BIGGEST value first on the ACTIVE list
+  // (no-value items sink to the bottom). The whole catalog is reachable —
+  // tiles render in slices of PICKER_PAGE as you scroll, so the DOM stays light.
   const pickerFiltered = useMemo(() =>
     catalog
       .filter((c) => c.category === pickCat)
       .filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
-      .sort((a, b) => (b.baseValue ?? -1) - (a.baseValue ?? -1)),
-    [catalog, pickCat, search]
+      .sort((a, b) => (b.values[source] ?? -1) - (a.values[source] ?? -1)),
+    [catalog, pickCat, search, source]
   );
   const pickerList = pickerFiltered.slice(0, pickerVisible);
 
@@ -710,7 +764,10 @@ export default function Calculator() {
                 {list.length}/{MAX_PER_SIDE}
               </span>
             </div>
-            <span className="flex-none text-[14px] font-bold tabular-nums text-[color:var(--lilac)] sm:text-lg [font-family:var(--font-data)]">
+            <span
+              className="flex-none text-[14px] font-bold tabular-nums sm:text-lg [font-family:var(--font-data)]"
+              style={{ color: `rgb(${meta.accent})` }}
+            >
               {fmt(display)}
             </span>
           </div>
@@ -722,26 +779,49 @@ export default function Calculator() {
               {Array.from({ length: cellCount }).map((_, i) => {
                 const entry = list[i];
                 if (entry) {
+                  const v = entry.values[source];
+                  const noPrice = v == null;
                   return (
                     <button
                       key={entry.uid}
                       onClick={() => removeItem(side, entry.uid)}
-                      title={`${entry.item.name} (${variantLabel(entry.tier, entry.fly, entry.ride)}) — tap to remove`}
-                      className="ptrc-pop group relative aspect-square rounded-lg border border-[color:var(--line-2)] p-1 transition hover:border-[color:var(--down)] hover:bg-[rgba(251,113,133,0.06)] active:scale-95 sm:aspect-auto sm:h-[112px] sm:rounded-xl sm:p-1.5"
-                      style={{ background: "rgba(168,139,250,0.07)" }}
+                      title={
+                        noPrice
+                          ? `${entry.item.name} (${variantLabel(entry.tier, entry.fly, entry.ride)}) — no ${meta.label} value, not counted`
+                          : `${entry.item.name} (${variantLabel(entry.tier, entry.fly, entry.ride)}) — tap to remove`
+                      }
+                      className="ptrc-pop group relative aspect-square rounded-lg border p-1 transition hover:border-[color:var(--down)] hover:bg-[rgba(251,113,133,0.06)] active:scale-95 sm:aspect-auto sm:h-[112px] sm:rounded-xl sm:p-1.5"
+                      style={{
+                        background: "rgba(168,139,250,0.07)",
+                        borderColor: noPrice ? "rgba(245,200,120,0.55)" : "var(--line-2)",
+                      }}
                     >
                       {entry.item.icon_url && (
-                        <img src={entry.item.icon_url} alt={entry.item.name} className="mx-auto h-[58%] w-[58%] object-contain transition-transform duration-200 group-hover:scale-90 sm:h-11 sm:w-11" loading="lazy" decoding="async" />
+                        <img src={entry.item.icon_url} alt={entry.item.name} className="mx-auto h-[58%] w-[58%] object-contain transition-transform duration-200 group-hover:scale-90 sm:h-11 sm:w-11" loading="lazy" decoding="async" style={noPrice ? { opacity: 0.55 } : undefined} />
                       )}
                       <div className="-mt-1 sm:-mt-2">
                         <span className="sm:hidden"><VariantBadges tier={entry.tier} fly={entry.fly} ride={entry.ride} size={12} /></span>
                         <span className="hidden sm:block"><VariantBadges tier={entry.tier} fly={entry.fly} ride={entry.ride} size={18} /></span>
                       </div>
                       <div className="hidden truncate text-center text-[10px] font-semibold leading-tight text-[color:var(--text)] sm:block">{entry.item.name}</div>
-                      <div className="hidden text-center text-[11px] font-bold tabular-nums leading-tight text-[color:var(--lilac)] sm:block [font-family:var(--font-data)]">{fmt(entry.value)}</div>
+                      <div
+                        className="hidden text-center text-[11px] font-bold tabular-nums leading-tight sm:block [font-family:var(--font-data)]"
+                        style={{ color: noPrice ? "#F5C878" : `rgb(${meta.accent})` }}
+                      >
+                        {noPrice ? "no value" : fmt(v)}
+                      </div>
                       <div className="hidden items-center justify-center sm:flex">
                         <DemandHearts level={entry.item.demand} size={7} />
                       </div>
+                      {noPrice && (
+                        <span
+                          className="absolute left-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full text-[10px] font-bold leading-none sm:left-1 sm:top-1"
+                          style={{ background: "#F5C878", color: "#2A1E05" }}
+                          aria-hidden="true"
+                        >
+                          !
+                        </span>
+                      )}
                       <span className="absolute right-0.5 top-0.5 hidden h-4 w-4 place-items-center rounded-full bg-[color:var(--down)] text-[10px] font-bold leading-none text-white group-hover:grid sm:right-1 sm:top-1" aria-hidden="true">×</span>
                     </button>
                   );
@@ -797,6 +877,7 @@ export default function Calculator() {
   const detailVariant = detail
     ? variantLabel(detailIsPet ? dTier : "normal", detailIsPet ? dFly : false, detailIsPet ? dRide : false)
     : "";
+  const detailActive = dValues ? dValues[source] : undefined;
 
   return (
     <main className="mx-auto max-w-5xl px-2 py-6 sm:px-6 sm:py-10">
@@ -811,6 +892,7 @@ export default function Calculator() {
         @keyframes ptrcPulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,0)} 50%{box-shadow:0 0 18px 2px rgba(168,85,247,0.35)} }
         @keyframes ptrcSlotGlow { 0%,100%{box-shadow:inset 0 0 0 0 rgba(168,85,247,0)} 50%{box-shadow:inset 0 0 16px 0 rgba(168,85,247,0.18)} }
         @keyframes ptrcFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+        @keyframes ptrcSourceIn { from{opacity:0; transform:translateY(-6px)} to{opacity:1; transform:translateY(0)} }
         .ptrc-reveal { opacity:0; animation: ptrcFade .45s cubic-bezier(.22,1,.36,1) forwards; }
         .ptrc-pop { animation: ptrcPop .25s cubic-bezier(.22,1,.36,1) both; }
         .ptrc-skel {
@@ -827,15 +909,20 @@ export default function Calculator() {
         .ptrc-glow { animation: ptrcSlotGlow 2.6s ease-in-out infinite; }
         .ptrc-marker { transition: left .5s cubic-bezier(.22,1,.36,1); }
         .ptrc-verdict { animation: ptrcPulseGlow 2.4s ease-in-out infinite; }
+        .ptrc-srcline { animation: ptrcSourceIn .3s cubic-bezier(.22,1,.36,1) both; }
+        .ptrc-srcbtn { transition: transform .18s ease, filter .18s ease; }
+        .ptrc-srcbtn:hover { transform: translateY(-2px); filter: brightness(1.08); }
+        .ptrc-srcbtn:active { transform: translateY(0) scale(.97); }
         .ptrc-scroll { scrollbar-width: thin; scrollbar-color: rgba(168,139,250,0.35) transparent; }
         .ptrc-scroll::-webkit-scrollbar { width: 6px; }
         .ptrc-scroll::-webkit-scrollbar-thumb { background: rgba(168,139,250,0.3); border-radius: 999px; }
         @media (prefers-reduced-motion: reduce) {
-          .ptrc-reveal, .ptrc-pop, .ptrc-backdrop, .ptrc-modal, .ptrc-detail, .ptrc-qtylist { animation:none!important; opacity:1!important; transform:none!important; }
+          .ptrc-reveal, .ptrc-pop, .ptrc-backdrop, .ptrc-modal, .ptrc-detail, .ptrc-qtylist, .ptrc-srcline { animation:none!important; opacity:1!important; transform:none!important; }
           .ptrc-skel, .ptrc-float { animation:none!important; }
           .ptrc-marker { transition:none!important; }
           .ptrc-verdict, .ptrc-glow { animation:none!important; }
           .ptrc-plus, .ptrc-slot:hover .ptrc-plus { transition:none!important; transform:none!important; }
+          .ptrc-srcbtn, .ptrc-srcbtn:hover, .ptrc-srcbtn:active { transition:none!important; transform:none!important; }
         }
       `}</style>
 
@@ -854,27 +941,61 @@ export default function Calculator() {
           <span className="font-semibold text-[color:var(--text)]">demand</span> — because a trade
           that wins on paper can still leave you holding pets nobody wants.
         </p>
-        {valueSource && (
-          <Link
-            href="/settings"
-            className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold transition hover:brightness-110 active:scale-95"
+      </div>
+
+      {/* ── SECOND OPINION: flip the whole board onto the other value list ──
+          Build the trade once, read it twice. The button names the list you're
+          NOT on, so it always reads as an action rather than a status. */}
+      <div
+        className="petora-card ptrc-reveal mt-5 p-3.5 sm:p-4"
+        style={{ animationDelay: "40ms", borderColor: `rgba(${meta.accent},0.45)`, background: `rgba(${meta.accent},0.05)` }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: `rgb(${meta.accent})` }}>
+              <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: `rgb(${meta.accent})` }} aria-hidden="true" />
+              Reading {meta.label} values
+            </p>
+            <p key={source} className="ptrc-srcline mt-1 text-[12.5px] leading-relaxed text-[color:var(--muted)]">
+              {meta.blurb}
+            </p>
+          </div>
+          <button
+            onClick={() => setSource(other)}
+            className="ptrc-srcbtn flex-none rounded-full px-4 py-2.5 text-[13px] font-bold sm:px-5 sm:text-[13.5px] [font-family:var(--font-display)]"
             style={{
-              borderColor: `rgba(${SOURCE_META[valueSource].accent},0.5)`,
-              background: `rgba(${SOURCE_META[valueSource].accent},0.10)`,
-              color: `rgb(${SOURCE_META[valueSource].accent})`,
+              background: `rgb(${otherMeta.accent})`,
+              color: "#0B0714",
+              boxShadow: `0 10px 28px -12px rgba(${otherMeta.accent},0.9)`,
             }}
-            title="Change your value source in Settings"
           >
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: `rgb(${SOURCE_META[valueSource].accent})` }} aria-hidden="true" />
-            Values: {SOURCE_META[valueSource].label}
-            <span className="opacity-60" aria-hidden="true">·</span>
-            <span className="font-medium opacity-80">change</span>
-          </Link>
+            See if it&apos;s a win on {otherMeta.label} &rarr;
+          </button>
+        </div>
+
+        {/* Pets with no price on the active list. Loud on purpose: they're
+            silently absent from the totals above, and a verdict computed
+            without them is not the verdict for this trade. */}
+        {calc.missing > 0 && (
+          <div
+            className="ptrc-pop mt-3 flex items-start gap-2.5 rounded-xl px-3.5 py-2.5"
+            style={{ background: "rgba(245,200,120,0.10)", border: "1px solid rgba(245,200,120,0.35)" }}
+          >
+            <span className="grid h-5 w-5 flex-none place-items-center rounded-full text-[11px] font-bold" style={{ background: "#F5C878", color: "#2A1E05" }} aria-hidden="true">!</span>
+            <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed" style={{ color: "#F5C878" }}>
+              <span className="font-bold">
+                {calc.missing} pet{calc.missing === 1 ? "" : "s"} on the board {calc.missing === 1 ? "has" : "have"} no {meta.label} value
+              </span>{" "}
+              ({calc.missingYou} yours, {calc.missingThem} theirs) and {calc.missing === 1 ? "isn't" : "aren't"} counted in
+              the totals — so treat this verdict as rough.{" "}
+              {source === "amvgg" && "AMVGG only started tracking on 2026-08-08 and doesn't list every pet yet."}
+            </p>
+          </div>
         )}
       </div>
 
       {/* verdict panel */}
-      <div className="petora-card ptrc-reveal mt-5 p-3.5 sm:mt-6 sm:p-5" style={{ animationDelay: "60ms", borderColor: "var(--line-2)" }}>
+      <div className="petora-card ptrc-reveal mt-4 p-3.5 sm:p-5" style={{ animationDelay: "60ms", borderColor: "var(--line-2)" }}>
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-4">
           {/* you give */}
           <div className="min-w-0 text-left">
@@ -893,6 +1014,8 @@ export default function Calculator() {
             </span>
             <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-wider text-[color:var(--muted)] sm:text-[11px]">
               {headlineIsDemand ? <>Value <span className="text-[color:var(--lilac)]">+</span> Demand <Heart filled size={9} /></> : "By value"}
+              <span className="mx-1 opacity-50" aria-hidden="true">·</span>
+              <span style={{ color: `rgb(${meta.accent})` }}>{meta.label}</span>
             </p>
           </div>
           {/* you receive */}
@@ -1038,7 +1161,7 @@ export default function Calculator() {
                       {revealBusy ? "Checking\u2026" : "Reveal demand verdict"}
                     </button>
                     <span className="w-full text-[11px] font-semibold text-[color:var(--lilac)]">
-                      {freeRemaining} of {FREE_DEMAND_PER_DAY} free checks left today
+                      {freeRemaining} of {FREE_DEMAND_PER_DAY} free checks left today · covers both value lists
                     </span>
                   </>
                 ) : (
@@ -1110,6 +1233,13 @@ export default function Calculator() {
             &#8644; Swap sides
           </button>
           <button
+            onClick={() => setSource(other)}
+            className="rounded-full border px-5 py-2 text-[13px] font-semibold transition hover:brightness-110 active:scale-95"
+            style={{ borderColor: `rgba(${otherMeta.accent},0.55)`, color: `rgb(${otherMeta.accent})`, background: `rgba(${otherMeta.accent},0.08)` }}
+          >
+            Check on {otherMeta.label}
+          </button>
+          <button
             onClick={() => { setYou([]); setThem([]); }}
             className="rounded-full border border-[color:var(--line-2)] px-5 py-2 text-[13px] font-semibold text-[color:var(--muted)] transition hover:text-[color:var(--text)] hover:bg-[rgba(168,139,250,0.08)] active:scale-95"
           >
@@ -1127,19 +1257,23 @@ export default function Calculator() {
           fly out of your inventory and the other leaves you stuck for weeks — so the demand verdict
           weighs both. It&apos;s a strong second opinion, not a guarantee.
         </p>
+        <p className="mt-3 border-t border-[color:var(--line)] pt-3">
+          <span className="font-semibold text-[color:var(--text)]">Two lists, one trade.</span> Elvebredd
+          and AMVGG price pets on completely different scales, so the totals will never match — a
+          number that halves when you switch doesn&apos;t mean anything went wrong. Compare the
+          <em> verdicts</em>, not the numbers. When both say Win, it&apos;s a good trade.
+        </p>
         <p className="mt-3 border-t border-[color:var(--line)] pt-3 text-[12px]">
           Values from{" "}
-          <a
-            href={SOURCE_META[valueSource ?? DEFAULT_SOURCE].site}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-semibold text-[color:var(--lilac)] underline decoration-[rgba(168,139,250,0.4)] underline-offset-2 hover:decoration-[color:var(--lilac)]"
-          >
-            {SOURCE_META[valueSource ?? DEFAULT_SOURCE].label}
-          </a>, demand from AMVGG. Petora is not affiliated with either site.{" "}
-          <Link href="/settings" className="font-semibold text-[color:var(--lilac)] underline underline-offset-2">
-            Change value source
-          </Link>
+          <a href={SOURCE_META.elvebredd.site} target="_blank" rel="noopener noreferrer" className="font-semibold text-[color:var(--lilac)] underline decoration-[rgba(168,139,250,0.4)] underline-offset-2 hover:decoration-[color:var(--lilac)]">
+            Elvebredd
+          </a>{" "}
+          and{" "}
+          <a href={SOURCE_META.amvgg.site} target="_blank" rel="noopener noreferrer" className="font-semibold text-[#38BDF8] underline decoration-[rgba(56,189,248,0.4)] underline-offset-2 hover:decoration-[#38BDF8]">
+            AMVGG
+          </a>
+          ; demand ratings from AMVGG. Every other page on Petora uses Elvebredd. Petora is not
+          affiliated with either site.
         </p>
       </div>
 
@@ -1172,6 +1306,12 @@ export default function Calculator() {
                   aria-live="polite"
                 >
                   {sideList.length}/{MAX_PER_SIDE}
+                </span>
+                <span
+                  className="rounded-full border px-2 py-0.5 text-[11px] font-bold"
+                  style={{ borderColor: `rgba(${meta.accent},0.5)`, color: `rgb(${meta.accent})`, background: `rgba(${meta.accent},0.10)` }}
+                >
+                  {meta.label}
                 </span>
               </div>
               <button onClick={closePicker} aria-label="Close" className="rounded-lg border border-[color:var(--line-2)] px-3 py-1.5 text-[color:var(--text)] transition hover:bg-[rgba(168,139,250,0.08)] active:scale-90">&times;</button>
@@ -1219,23 +1359,31 @@ export default function Calculator() {
               ) : (
                 <>
                   <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5 sm:gap-2">
-                    {pickerList.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => openDetail(c)}
-                        disabled={sideFull || (c.category !== "pet" && c.baseValue == null)}
-                        className="relative rounded-xl border border-[color:var(--line)] p-2 text-center transition hover:border-[color:var(--violet)] hover:bg-[rgba(168,85,247,0.08)] active:scale-95 disabled:opacity-40 disabled:hover:border-[color:var(--line)] disabled:hover:bg-transparent"
-                      >
-                        {c.icon_url && <img src={c.icon_url} alt={c.name} className="mx-auto h-12 w-12 object-contain" loading="lazy" decoding="async" />}
-                        <div className="mt-1 truncate text-[11px] font-semibold text-[color:var(--text)]">{c.name}</div>
-                        <div className="text-[11px] font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]">
-                          {c.baseValue != null ? fmt(c.baseValue) : "\u2014"}
-                        </div>
-                        <div className="flex items-center justify-center">
-                          <DemandHearts level={c.demand} size={8} />
-                        </div>
-                      </button>
-                    ))}
+                    {pickerList.map((c) => {
+                      const shown = c.values[source];
+                      // Only an Elvebredd price gates adding — see detailAddable.
+                      const blocked = sideFull || (c.category !== "pet" && c.values.elvebredd == null);
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => openDetail(c)}
+                          disabled={blocked}
+                          className="relative rounded-xl border border-[color:var(--line)] p-2 text-center transition hover:border-[color:var(--violet)] hover:bg-[rgba(168,85,247,0.08)] active:scale-95 disabled:opacity-40 disabled:hover:border-[color:var(--line)] disabled:hover:bg-transparent"
+                        >
+                          {c.icon_url && <img src={c.icon_url} alt={c.name} className="mx-auto h-12 w-12 object-contain" loading="lazy" decoding="async" />}
+                          <div className="mt-1 truncate text-[11px] font-semibold text-[color:var(--text)]">{c.name}</div>
+                          <div
+                            className="text-[11px] font-bold tabular-nums [font-family:var(--font-data)]"
+                            style={{ color: shown == null ? "#F5C878" : `rgb(${meta.accent})` }}
+                          >
+                            {shown != null ? fmt(shown) : "\u2014"}
+                          </div>
+                          <div className="flex items-center justify-center">
+                            <DemandHearts level={c.demand} size={8} />
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                   {pickerVisible < pickerFiltered.length && (
                     <p className="py-3 text-center text-[12px] text-[color:var(--muted)]">
@@ -1247,7 +1395,7 @@ export default function Calculator() {
             </div>
 
             <p className="mt-2.5 border-t border-[color:var(--line)] pt-2.5 text-center text-[11.5px] text-[color:var(--muted)] sm:mt-3 sm:pt-3">
-              Tap a pet to pick its variation and how many. Values shown are Normal / No-Potion.
+              Tap a pet to pick its variation and how many. Prices shown are Normal / No-Potion on {meta.label}.
             </p>
           </div>
 
@@ -1281,11 +1429,11 @@ export default function Calculator() {
                     <img src={detail.icon_url} alt={detail.name} className="ptrc-float h-full w-full object-contain" decoding="async" />
                   )}
                   <span
-                    className="absolute bottom-0 right-0 min-w-[42px] rounded-full border px-2 py-1 text-[12.5px] font-bold tabular-nums text-[color:var(--lilac)] [font-family:var(--font-data)]"
-                    style={{ background: "var(--surface-2)", borderColor: "var(--line-2)" }}
+                    className="absolute bottom-0 right-0 min-w-[42px] rounded-full border px-2 py-1 text-[12.5px] font-bold tabular-nums [font-family:var(--font-data)]"
+                    style={{ background: "var(--surface-2)", borderColor: `rgba(${meta.accent},0.5)`, color: `rgb(${meta.accent})` }}
                     aria-live="polite"
                   >
-                    {dValue === undefined ? "\u2026" : dValue == null ? "\u2014" : fmt(dValue)}
+                    {dValues === undefined ? "\u2026" : detailActive == null ? "\u2014" : fmt(detailActive)}
                   </span>
                 </div>
 
@@ -1379,21 +1527,31 @@ export default function Calculator() {
                   <span className="text-[11.5px] text-[color:var(--muted)]">{slotsLeft} slot{slotsLeft === 1 ? "" : "s"} left</span>
                 </div>
 
-                {dValue === null && (
+                {/* No Elvebredd price → can't add at all (Elvebredd is the
+                    canonical scale). No AMVGG price → can add, but it won't
+                    count toward the AMVGG verdict, so say so up front rather
+                    than letting it quietly vanish from a total later. */}
+                {dValues && dValues.elvebredd == null && (
                   <p className="mt-3 text-[12.5px] font-semibold" style={{ color: "var(--down)" }}>
                     No value listed for {detailVariant} — try another variation.
+                  </p>
+                )}
+                {dValues && dValues.elvebredd != null && dValues.amvgg == null && (
+                  <p className="mt-3 text-[12px] leading-relaxed" style={{ color: "#F5C878" }}>
+                    AMVGG doesn&apos;t list this variation — it&apos;ll count on Elvebredd but be left
+                    out of the AMVGG verdict.
                   </p>
                 )}
 
                 <button
                   onClick={confirmSelect}
-                  disabled={dValue == null || dValue === undefined || slotsLeft <= 0}
+                  disabled={!detailAddable || slotsLeft <= 0}
                   className="mt-5 w-full rounded-xl px-6 py-3 text-[15px] font-bold text-[#1a1030] shadow-[0_10px_30px_-12px_rgba(168,85,247,0.9)] transition hover:brightness-110 active:scale-95 disabled:opacity-35 [background-image:var(--ramp-h)] [font-family:var(--font-display)]"
                 >
-                  {dValue === undefined
+                  {dValues === undefined
                     ? "Checking value\u2026"
                     : dQty > 1
-                      ? `Select ${dQty} \u00b7 ${dValue == null ? "\u2014" : fmt(dValue * dQty)}`
+                      ? `Select ${dQty} \u00b7 ${detailActive == null ? "\u2014" : fmt(detailActive * dQty)}`
                       : "Select"}
                 </button>
                 <p className="mt-2 text-[11px] text-[color:var(--muted)]">

@@ -1,10 +1,14 @@
 // → app/settings/page.tsx   (URL: /settings)
 // The OAuth callback redirects here with ?roblox=ok | taken | error.
+//
+// The "Pet values" section (Elvebredd vs AMVGG) was removed: Petora reads
+// Elvebredd everywhere now. AMVGG survives in two places only — the demand
+// hearts, and the Trade Calculator's second-opinion toggle — neither of which
+// is a stored preference, so there's nothing here to configure.
 export const dynamic = "force-dynamic";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import ValueSourcePicker from "@/components/ValueSourcePicker";
 
 export default async function SettingsPage({
   searchParams,
@@ -58,21 +62,6 @@ export default async function SettingsPage({
         </p>
       )}
 
-      {/* ── Value source ────────────────────────────────────────────────── */}
-      {/* This is a CLIENT component inside a server page — it does its own
-          auth check and saves profiles.value_source itself, so nothing needs
-          passing down. Placed first because it changes what every price on
-          the site says, which matters more day-to-day than verification. */}
-      <h2 className="mt-7 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
-        Pet values
-      </h2>
-      <div className="petora-card mt-2 p-5" style={{ borderColor: "var(--line-2)" }}>
-        <p className="mb-3 text-sm text-[color:var(--muted)]">
-          Choose which community value list the Catalog and Trade Calculator read from.
-        </p>
-        <ValueSourcePicker />
-      </div>
-
       {/* ── Roblox verification ─────────────────────────────────────────── */}
       <h2 className="mt-7 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
         Roblox verification
@@ -124,6 +113,28 @@ export default async function SettingsPage({
         </div>
         <span className="flex-none text-[color:var(--lilac)]" aria-hidden="true">→</span>
       </Link>
+
+      {/* ── Where values come from (informational, not a setting) ───────── */}
+      <h2 className="mt-7 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--muted)]">
+        Pet values
+      </h2>
+      <div className="petora-card mt-2 p-5" style={{ borderColor: "var(--line-2)" }}>
+        <p className="text-sm leading-relaxed text-[color:var(--muted)]">
+          Petora prices everything from{" "}
+          <a href="https://elvebredd.com" target="_blank" rel="noopener noreferrer" className="font-semibold text-[color:var(--lilac)] underline underline-offset-2">
+            Elvebredd
+          </a>
+          . Demand hearts come from{" "}
+          <a href="https://amvgg.com" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#38BDF8] underline underline-offset-2">
+            AMVGG
+          </a>
+          , and you can check any trade against AMVGG&apos;s values from the{" "}
+          <Link href="/calculator" className="font-semibold text-[color:var(--lilac)] underline underline-offset-2">
+            Trade Calculator
+          </Link>
+          .
+        </p>
+      </div>
     </main>
   );
 }
